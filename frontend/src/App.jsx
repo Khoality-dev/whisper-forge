@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import CollectData from "./components/CollectData";
+import Dataset from "./components/Dataset";
+import Collect from "./components/Collect";
 import Train from "./components/Train";
 
 const styles = {
   app: {
-    maxWidth: 800,
+    maxWidth: 900,
     margin: "0 auto",
     padding: "20px",
     fontFamily: "system-ui, -apple-system, sans-serif",
@@ -34,20 +35,25 @@ const styles = {
 };
 
 export default function App() {
-  const [tab, setTab] = useState("collect");
+  const [tab, setTab] = useState("dataset");
 
   return (
     <div style={styles.app}>
       <h1 style={styles.title}>WhisperForge</h1>
       <div style={styles.tabs}>
+        <button style={styles.tab(tab === "dataset")} onClick={() => setTab("dataset")}>
+          Dataset
+        </button>
         <button style={styles.tab(tab === "collect")} onClick={() => setTab("collect")}>
-          Collect Data
+          Collect
         </button>
         <button style={styles.tab(tab === "train")} onClick={() => setTab("train")}>
           Train
         </button>
       </div>
-      {tab === "collect" ? <CollectData /> : <Train />}
+      {tab === "dataset" && <Dataset />}
+      {tab === "collect" && <Collect />}
+      {tab === "train" && <Train />}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import os
-import random
+import re
 import subprocess
 import sys
 import time
@@ -8,7 +8,6 @@ from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
 
 # ── Config ──────────────────────────────────────────────────────────────────
@@ -22,31 +21,8 @@ os.makedirs(AUDIO_DIR, exist_ok=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  Collect Data — helpers & state
+#  Dataset — helpers
 # ═══════════════════════════════════════════════════════════════════════════
-
-def load_sentences():
-    os.makedirs(LABELS_DIR, exist_ok=True)
-    sentences = []
-    for txt_file in sorted(os.listdir(LABELS_DIR)):
-        if txt_file.endswith(".txt"):
-            with open(os.path.join(LABELS_DIR, txt_file), "r", encoding="utf-8") as f:
-                sentences.extend(line.strip() for line in f if line.strip())
-    return sentences
-
-
-def load_completed_sentences():
-    completed = set()
-    if os.path.exists(CSV_PATH) and os.path.getsize(CSV_PATH) > 0:
-        with open(CSV_PATH, "r", encoding="utf-8") as f:
-            for i, line in enumerate(f):
-                if i == 0:
-                    continue
-                parts = line.strip().split(",", 1)
-                if len(parts) == 2:
-                    completed.add(parts[1].strip().strip('"'))
-    return completed
-
 
 def ensure_csv_header():
     if not os.path.exists(CSV_PATH) or os.path.getsize(CSV_PATH) == 0:
@@ -60,37 +36,42 @@ def append_to_csv(audio_path, text):
         f.write(f'{audio_path},"{text}"\n')
 
 
-class CollectState:
-    def __init__(self):
-        self.all_sentences = load_sentences()
-        self.completed = load_completed_sentences()
-        self.pending = [s for s in self.all_sentences if s not in self.completed]
-        random.shuffle(self.pending)
-        self.current_index = 0
+def remove_csv_entry(audio_path):
+    if not os.path.exists(CSV_PATH):
+        return
+    with open(CSV_PATH, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    with open(CSV_PATH, "w", encoding="utf-8") as f:
+        for line in lines:
+            if not line.startswith(audio_path + ","):
+                f.write(line)
 
-    @property
-    def total(self):
-        return len(self.all_sentences)
 
-    @property
-    def done_count(self):
-        return len(self.completed)
+def load_recordings():
+    recordings = {}
+    if os.path.exists(CSV_PATH) and os.path.getsize(CSV_PATH) > 0:
+        with open(CSV_PATH, "r", encoding="utf-8") as f:
+            for i, line in enumerate(f):
+                if i == 0:
+                    continue
+                parts = line.strip().split(",", 1)
+                if len(parts) == 2:
+                    audio_path = parts[0].strip()
+                    text = parts[1].strip().strip('"')
+                    fn = os.path.basename(audio_path)
+                    if text not in recordings:
+                        recordings[text] = []
+                    recordings[text].append({"filename": fn, "path": audio_path})
+    return recordings
 
-    @property
-    def current_sentence(self):
-        if self.current_index < len(self.pending):
-            return self.pending[self.current_index]
-        return None
 
-    def advance(self):
-        self.current_index += 1
-
-    def mark_done(self, sentence):
-        self.completed.add(sentence)
+def validate_label_filename(filename):
+    if not filename or ".." in filename or "/" in filename or "\\" in filename:
+        return False
+    return bool(re.match(r'^[\w\-. ]+\.txt$', filename))
 
 
 ensure_csv_header()
-collect = CollectState()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -124,41 +105,151 @@ def _read_train_output():
 app = FastAPI(title="WhisperForge")
 
 
-# ── Collect Data endpoints ────────────────────────────────────────────────
+# ── Label management endpoints ────────────────────────────────────────────
 
-def _sentence_response():
-    sentence = collect.current_sentence
-    return {
-        "sentence": sentence if sentence else "All sentences have been recorded!",
-        "progress": {"done": collect.done_count, "total": collect.total},
-        "finished": sentence is None,
-    }
+@app.get("/api/labels")
+def list_labels():
+    os.makedirs(LABELS_DIR, exist_ok=True)
+    files = []
+    for txt_file in sorted(os.listdir(LABELS_DIR)):
+        if txt_file.endswith(".txt"):
+            filepath = os.path.join(LABELS_DIR, txt_file)
+            with open(filepath, "r", encoding="utf-8") as f:
+                sentences = [line.strip() for line in f if line.strip()]
+            files.append({"filename": txt_file, "sentences": sentences})
+    return {"files": files}
 
 
-@app.get("/api/sentences/current")
-def get_current_sentence():
-    return _sentence_response()
+@app.post("/api/labels")
+def create_label_file(body: dict):
+    filename = body.get("filename", "").strip()
+    if not filename.endswith(".txt"):
+        filename += ".txt"
+    if not validate_label_filename(filename):
+        return JSONResponse(status_code=400, content={"error": "Invalid filename."})
+    filepath = os.path.join(LABELS_DIR, filename)
+    if os.path.exists(filepath):
+        return JSONResponse(status_code=409, content={"error": "File already exists."})
+    os.makedirs(LABELS_DIR, exist_ok=True)
+    with open(filepath, "w", encoding="utf-8") as f:
+        pass
+    return {"filename": filename}
 
 
-@app.post("/api/sentences/skip")
-def skip_sentence():
-    collect.advance()
-    return _sentence_response()
+@app.delete("/api/labels/{filename}")
+def delete_label_file(filename: str):
+    if not validate_label_filename(filename):
+        return JSONResponse(status_code=400, content={"error": "Invalid filename."})
+    filepath = os.path.join(LABELS_DIR, filename)
+    if not os.path.exists(filepath):
+        return JSONResponse(status_code=404, content={"error": "File not found."})
+    os.remove(filepath)
+    return {"message": f"Deleted {filename}"}
+
+
+@app.post("/api/labels/{filename}/add")
+def add_sentence(filename: str, body: dict):
+    if not validate_label_filename(filename):
+        return JSONResponse(status_code=400, content={"error": "Invalid filename."})
+    sentence = body.get("sentence", "").strip()
+    if not sentence:
+        return JSONResponse(status_code=400, content={"error": "Sentence is empty."})
+    filepath = os.path.join(LABELS_DIR, filename)
+    if not os.path.exists(filepath):
+        return JSONResponse(status_code=404, content={"error": "File not found."})
+    with open(filepath, "a", encoding="utf-8") as f:
+        f.write(sentence + "\n")
+    return {"message": "Sentence added."}
+
+
+@app.post("/api/labels/{filename}/remove")
+def remove_sentence(filename: str, body: dict):
+    if not validate_label_filename(filename):
+        return JSONResponse(status_code=400, content={"error": "Invalid filename."})
+    sentence = body.get("sentence", "").strip()
+    filepath = os.path.join(LABELS_DIR, filename)
+    if not os.path.exists(filepath):
+        return JSONResponse(status_code=404, content={"error": "File not found."})
+    with open(filepath, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
+    found = False
+    new_lines = []
+    for line in lines:
+        if line == sentence and not found:
+            found = True
+            continue
+        new_lines.append(line)
+    with open(filepath, "w", encoding="utf-8") as f:
+        for line in new_lines:
+            f.write(line + "\n")
+    return {"message": "Sentence removed."}
+
+
+# ── Dataset endpoints ─────────────────────────────────────────────────────
+
+@app.get("/api/dataset")
+def get_dataset():
+    recordings = load_recordings()
+    os.makedirs(LABELS_DIR, exist_ok=True)
+    groups = []
+    for txt_file in sorted(os.listdir(LABELS_DIR)):
+        if txt_file.endswith(".txt"):
+            filepath = os.path.join(LABELS_DIR, txt_file)
+            with open(filepath, "r", encoding="utf-8") as f:
+                sentences = [line.strip() for line in f if line.strip()]
+            sentence_data = []
+            for s in sentences:
+                sentence_data.append({
+                    "text": s,
+                    "recordings": recordings.get(s, []),
+                })
+            groups.append({"filename": txt_file, "sentences": sentence_data})
+    return {"groups": groups}
+
+
+@app.get("/api/audio/{filename}")
+def serve_audio(filename: str):
+    if ".." in filename or "/" in filename or "\\" in filename:
+        return JSONResponse(status_code=400, content={"error": "Invalid filename."})
+    filepath = os.path.join(AUDIO_DIR, filename)
+    if not os.path.exists(filepath):
+        return JSONResponse(status_code=404, content={"error": "Audio file not found."})
+    return FileResponse(filepath, media_type="audio/wav")
 
 
 @app.post("/api/recordings")
-async def save_recording(audio: UploadFile = File(...), sentence: str = Form(...)):
-    audio_path = f"{AUDIO_DIR}/sample_{int(time.time() * 1000)}.wav"
+async def save_recording(
+    audio: UploadFile = File(...),
+    sentence: str = Form(...),
+    replace: str = Form(None),
+):
+    audio_filename = f"sample_{int(time.time() * 1000)}.wav"
+    audio_path = f"{AUDIO_DIR}/{audio_filename}"
 
     content = await audio.read()
     with open(audio_path, "wb") as f:
         f.write(content)
 
-    append_to_csv(audio_path, sentence)
-    collect.mark_done(sentence)
-    collect.advance()
+    if replace:
+        old_path = f"{AUDIO_DIR}/{replace}"
+        remove_csv_entry(old_path)
+        if os.path.exists(old_path):
+            os.remove(old_path)
 
-    return _sentence_response()
+    append_to_csv(audio_path, sentence)
+    return {"filename": audio_filename, "path": audio_path}
+
+
+@app.delete("/api/recordings/{filename}")
+def delete_recording(filename: str):
+    if ".." in filename or "/" in filename or "\\" in filename:
+        return JSONResponse(status_code=400, content={"error": "Invalid filename."})
+    audio_path = f"{AUDIO_DIR}/{filename}"
+    remove_csv_entry(audio_path)
+    if os.path.exists(audio_path):
+        os.remove(audio_path)
+        return {"message": f"Deleted {filename}"}
+    return JSONResponse(status_code=404, content={"error": "File not found."})
 
 
 # ── Train endpoints ──────────────────────────────────────────────────────
