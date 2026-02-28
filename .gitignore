@@ -13,6 +13,10 @@ __pycache__/
 venv/
 .venv/
 
+# Frontend
+frontend/node_modules/
+static/
+
 # IDE
 .vscode/
 .idea/
