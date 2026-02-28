@@ -1,4 +1,18 @@
+# User data (audio, labels, trained models)
+userdata/
+whisper-finetuned/
+
+# Legacy directories
+record/
 dataset/
 outputs/
+
+# Python
+__pycache__/
+*.pyc
 venv/
-whisper-finetuned/
+.venv/
+
+# IDE
+.vscode/
+.idea/

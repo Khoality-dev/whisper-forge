@@ -16,8 +16,10 @@ from jiwer import wer
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Fine-tune Whisper base model")
-    parser.add_argument("--data_dir", type=str, default="dataset",
-                        help="Path to CSV file and audio files")
+    parser.add_argument("--csv", type=str, default="userdata/dataset/recorded_samples.csv",
+                        help="Path to the recorded samples CSV")
+    parser.add_argument("--val_split", type=float, default=0.1,
+                        help="Fraction of data to use for validation")
     parser.add_argument("--output_dir", type=str, default="whisper-finetuned",
                         help="Where to save checkpoints and the final model")
     parser.add_argument("--lang", type=str, default="en",
@@ -25,7 +27,7 @@ def parse_args():
     parser.add_argument("--train_batch_size", type=int, default=8)
     parser.add_argument("--eval_batch_size", type=int, default=8)
     parser.add_argument("--learning_rate", type=float, default=1e-5)
-    parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--fp16", action="store_true",
                         help="Enable mixed precision training (fp16)")
     parser.add_argument("--logging_steps", type=int, default=100)
@@ -50,10 +52,11 @@ def main():
     model.generation_config.forced_decoder_ids = None
 
 
-    # Load and prepare datasets
-    data_files = {"train": args.data_dir + "/train.csv", "validation": args.data_dir + "/val.csv"}
-    ds = load_dataset("csv", data_files=data_files, delimiter=",")
+    # Load dataset and split into train/val
+    ds = load_dataset("csv", data_files=args.csv, split="train")
     ds = ds.cast_column("audio", Audio(sampling_rate=16_000))
+    ds = ds.train_test_split(test_size=args.val_split, seed=42)
+    ds["validation"] = ds.pop("test")
 
     # Preprocessing function
     def preprocess(batch):

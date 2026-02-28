@@ -18,6 +18,7 @@ evaluate==0.4.3
 filelock==3.18.0
 frozenlist==1.6.0
 fsspec==2025.3.0
+gradio
 grpcio==1.71.0
 huggingface-hub==0.31.1
 idna==3.10

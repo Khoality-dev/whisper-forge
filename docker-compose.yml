@@ -1,0 +1,7 @@
+services:
+  whisperforge:
+    build: .
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./userdata:/app/userdata

@@ -1,54 +1,74 @@
-# WhisperFinetuning
+# 🎙️ WhisperForge
 
-A minimal setup to fine‑tune OpenAI Whisper on your custom audio dataset.
+**WhisperForge** is a simple web app that helps you collect voice recordings and train a personalized Whisper speech model.
 
-## Requirements
+It provides a clean browser-based interface where you can record audio, manage transcripts, and fine-tune a model — all in one place.
 
-* Python 3.9+
-* ffmpeg (for audio conversion)
+---
 
-## Setup
+## ✨ What You Can Do
 
-1. **Clone the repository**
+* 🎤 Record yourself reading sentences
+* 📝 Automatically save audio with matching transcripts
+* 📚 Build your own speech dataset
+* 🧠 Train a Whisper model using your recordings
+* 🔁 Improve your model over time with more data
 
-   ```bash
-   git clone https://github.com/Khoality-dev/WhisperFinetuning.git
-   cd WhisperFinetuning
-   ```
-2. **Install dependencies**
+---
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+## 🚀 Getting Started
 
-## Dataset Structure
+Start the application and open the following address in your browser:
 
-Organize your `dataset/` directory as follows:
+[http://localhost:7860](http://localhost:7860)
 
-```
-dataset/
-├── train.tsv      # audio_path <TAB> transcript
-├── val.tsv        # audio_path <TAB> transcript
-└── audio_files/   # .wav files
-    ├── audio1.wav
-    ├── audio2.wav
-    └── ...
-```
+You will see two main sections inside the app.
 
-Optionally, generate data with:
+---
 
-```bash
-python data_generation_tool.py
-```
+## 🖥️ App Overview
 
-## Training
+### 🎙️ Collect Data
 
-```bash
-python train.py
-```
+* Read sentences directly in your browser
+* Record your voice
+* Save audio and text together automatically
+* Build a clean and organized dataset
 
-## &#x20;
+### 🧠 Train
 
-## License
+* Configure your training options
+* Launch the training process
+* Fine-tune a model using your recorded data
 
-MIT
+---
+
+## 📂 Your Data
+
+All recordings and transcripts are stored inside the `userdata` folder.
+
+This keeps:
+
+* Your sentences
+* Your audio files
+* Your dataset
+
+Everything is kept separate from the main project files.
+
+---
+
+## 🎯 Who Is This For?
+
+WhisperForge is ideal for:
+
+* Creating personalized speech models
+* Voice assistant projects
+* Research experiments
+* Collecting speech data quickly
+* Exploring custom speech recognition systems
+
+---
+
+## 📜 License
+
+MIT License
