@@ -35,6 +35,14 @@ def _safe_name(name: str) -> bool:
     return bool(name) and ".." not in name and "/" not in name and "\\" not in name
 
 
+def _app_config(model_path: str) -> str:
+    """App training config path. Uses train_config.json to avoid conflict with HuggingFace's config.json."""
+    tc = os.path.join(model_path, "train_config.json")
+    if os.path.exists(tc):
+        return tc
+    return os.path.join(model_path, "config.json")
+
+
 # ── Per-dataset CSV helpers ───────────────────────────────────────────────
 
 def _labels_csv(ds_path: str) -> str:
@@ -224,7 +232,7 @@ def _promote_best_checkpoint(model_path: str):
 def _build_train_cmd(model_name: str) -> list[str]:
     """Build the train.py command from a model's config."""
     model_path = os.path.join(MODELS_DIR, model_name)
-    config_path = os.path.join(model_path, "config.json")
+    config_path = _app_config(model_path)
     with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
 
@@ -554,7 +562,7 @@ def create_model(body: dict):
         "save_steps": 500,
         "eval_steps": 500,
     }
-    with open(os.path.join(model_path, "config.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(model_path, "train_config.json"), "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
     return {"name": name, "status": "untrained"}
 
@@ -584,7 +592,8 @@ def delete_model(name: str):
 def get_model_config(name: str):
     if not _safe_name(name):
         return JSONResponse(status_code=400, content={"error": "Invalid model name."})
-    config_path = os.path.join(MODELS_DIR, name, "config.json")
+    model_path = os.path.join(MODELS_DIR, name)
+    config_path = _app_config(model_path)
     if not os.path.exists(config_path):
         return JSONResponse(status_code=404, content={"error": "Model version not found."})
     with open(config_path, "r", encoding="utf-8") as f:
@@ -598,7 +607,7 @@ def save_model_config(name: str, config: dict):
     model_path = os.path.join(MODELS_DIR, name)
     if not os.path.isdir(model_path):
         return JSONResponse(status_code=404, content={"error": "Model version not found."})
-    config_path = os.path.join(model_path, "config.json")
+    config_path = os.path.join(model_path, "train_config.json")
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
     return {"message": "Config saved."}
@@ -609,7 +618,7 @@ def start_model_training(name: str):
     if not _safe_name(name):
         return JSONResponse(status_code=400, content={"error": "Invalid model name."})
     model_path = os.path.join(MODELS_DIR, name)
-    config_path = os.path.join(model_path, "config.json")
+    config_path = _app_config(model_path)
     if not os.path.exists(config_path):
         return JSONResponse(status_code=404, content={"error": "Model version not found."})
 
@@ -728,7 +737,7 @@ def predict_model_samples(name: str, body: dict = {}):
             content={"error": "No trained model found. Train a model first."},
         )
 
-    config_path = os.path.join(model_path, "config.json")
+    config_path = _app_config(model_path)
     dataset_dirs = []
     if os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
@@ -762,6 +771,46 @@ def predict_model_samples(name: str, body: dict = {}):
         )
 
     return json.loads(result.stdout)
+
+
+@app.post("/api/models/{name}/transcribe")
+async def transcribe_audio(name: str, audio: UploadFile = File(...)):
+    if not _safe_name(name):
+        return JSONResponse(status_code=400, content={"error": "Invalid model name."})
+    model_path = os.path.join(MODELS_DIR, name)
+    has_model = os.path.exists(os.path.join(model_path, "model.safetensors")) or \
+                os.path.exists(os.path.join(model_path, "pytorch_model.bin"))
+    if not has_model:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "No trained model found. Train a model first."},
+        )
+
+    tmp_dir = tempfile.mkdtemp()
+    try:
+        tmp_audio = os.path.join(tmp_dir, "input.wav")
+        content = await audio.read()
+        with open(tmp_audio, "wb") as f:
+            f.write(content)
+
+        result = subprocess.run(
+            [
+                sys.executable, "predict.py",
+                "--model_dir", model_path,
+                "--audio_file", tmp_audio,
+            ],
+            capture_output=True, text=True, timeout=120,
+        )
+
+        if result.returncode != 0:
+            return JSONResponse(
+                status_code=500,
+                content={"error": result.stderr or "Transcription failed."},
+            )
+
+        return json.loads(result.stdout)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ── Static file serving (React SPA) ──────────────────────────────────────

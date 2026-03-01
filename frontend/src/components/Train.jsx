@@ -9,6 +9,7 @@ import {
   stopModelTraining,
   getModelStatus,
   predictModelSamples,
+  transcribeAudio,
   fetchDatasets,
 } from "../api";
 
@@ -231,9 +232,18 @@ export default function Train() {
   const [log, setLog] = useState("");
   const [predictions, setPredictions] = useState(null);
   const [predicting, setPredicting] = useState(false);
+  const [liveTestOpen, setLiveTestOpen] = useState(false);
+  const [liveRecording, setLiveRecording] = useState(false);
+  const [liveAudioBlob, setLiveAudioBlob] = useState(null);
+  const [liveAudioURL, setLiveAudioURL] = useState(null);
+  const [liveTranscribing, setLiveTranscribing] = useState(false);
+  const [liveResult, setLiveResult] = useState(null);
+  const [liveError, setLiveError] = useState(null);
   const pollRef = useRef(null);
   const logEndRef = useRef(null);
   const saveTimeoutRef = useRef(null);
+  const liveRecorderRef = useRef(null);
+  const liveChunksRef = useRef([]);
 
   const loadModels = async () => {
     const data = await fetchModels();
@@ -277,6 +287,19 @@ export default function Train() {
       setQueued(false);
       setQueuePosition(null);
       setPredictions(null);
+      setLiveTestOpen(false);
+      setLiveRecording(false);
+      setLiveAudioBlob(null);
+      if (liveAudioURL) URL.revokeObjectURL(liveAudioURL);
+      setLiveAudioURL(null);
+      setLiveTranscribing(false);
+      setLiveResult(null);
+      setLiveError(null);
+      if (liveRecorderRef.current && liveRecorderRef.current.state !== "inactive") {
+        liveRecorderRef.current.stop();
+      }
+      liveRecorderRef.current = null;
+      liveChunksRef.current = [];
     }
   }, [selected]);
 
@@ -394,6 +417,55 @@ export default function Train() {
       setPredictions([]);
     }
     setPredicting(false);
+  };
+
+  const startLiveRecording = async () => {
+    setLiveAudioBlob(null);
+    if (liveAudioURL) URL.revokeObjectURL(liveAudioURL);
+    setLiveAudioURL(null);
+    setLiveResult(null);
+    setLiveError(null);
+    liveChunksRef.current = [];
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) liveChunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(liveChunksRef.current, { type: "audio/wav" });
+        const url = URL.createObjectURL(blob);
+        setLiveAudioBlob(blob);
+        setLiveAudioURL(url);
+        setLiveRecording(false);
+      };
+      liveRecorderRef.current = recorder;
+      recorder.start();
+      setLiveRecording(true);
+    } catch {
+      setLiveError("Microphone access denied.");
+    }
+  };
+
+  const stopLiveRecording = () => {
+    if (liveRecorderRef.current && liveRecorderRef.current.state !== "inactive") {
+      liveRecorderRef.current.stop();
+    }
+  };
+
+  const handleTranscribe = async () => {
+    if (!liveAudioBlob || !selected) return;
+    setLiveTranscribing(true);
+    setLiveResult(null);
+    setLiveError(null);
+    try {
+      const res = await transcribeAudio(selected, liveAudioBlob);
+      setLiveResult(res.predicted);
+    } catch (err) {
+      setLiveError(err.message || "Transcription failed.");
+    }
+    setLiveTranscribing(false);
   };
 
   if (loading) return <div style={styles.empty}>Loading models...</div>;
@@ -580,6 +652,93 @@ export default function Train() {
           >
             {predicting ? "Testing..." : "Test Model"}
           </button>
+        </div>
+
+        {/* Live Test */}
+        <div style={{ marginBottom: "16px" }}>
+          <button
+            style={{
+              ...styles.btn(),
+              ...(running || queued ? styles.btnDisabled : {}),
+            }}
+            onClick={() => setLiveTestOpen((v) => !v)}
+            disabled={running || queued}
+          >
+            {liveTestOpen ? "Close Live Test" : "Live Test"}
+          </button>
+          {liveTestOpen && (
+            <div
+              style={{
+                marginTop: "12px",
+                padding: "16px",
+                border: "1px solid #e5e7eb",
+                borderRadius: "8px",
+                background: "#fafafa",
+              }}
+            >
+              <p style={{ color: "#666", fontSize: "0.85rem", marginBottom: "12px" }}>
+                Record audio from your microphone and transcribe it with this model.
+              </p>
+              {liveAudioURL && (
+                <div style={{ marginBottom: "12px" }}>
+                  <audio controls src={liveAudioURL} style={{ width: "100%" }} />
+                </div>
+              )}
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                {!liveRecording ? (
+                  <button style={styles.btn("primary")} onClick={startLiveRecording}>
+                    Record
+                  </button>
+                ) : (
+                  <button style={styles.btn("danger")} onClick={stopLiveRecording}>
+                    Stop
+                  </button>
+                )}
+                <button
+                  style={{
+                    ...styles.btn("primary"),
+                    ...(!liveAudioBlob || liveTranscribing || liveRecording
+                      ? styles.btnDisabled
+                      : {}),
+                  }}
+                  onClick={handleTranscribe}
+                  disabled={!liveAudioBlob || liveTranscribing || liveRecording}
+                >
+                  {liveTranscribing ? "Transcribing..." : "Transcribe"}
+                </button>
+              </div>
+              {liveResult !== null && (
+                <div
+                  style={{
+                    marginTop: "12px",
+                    padding: "12px",
+                    background: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
+                    borderRadius: "6px",
+                    color: "#166534",
+                    fontSize: "0.95rem",
+                  }}
+                >
+                  <strong>Result:</strong> {liveResult}
+                </div>
+              )}
+              {liveError && (
+                <div
+                  style={{
+                    marginTop: "12px",
+                    padding: "12px",
+                    background: "#fef2f2",
+                    border: "1px solid #fecaca",
+                    borderRadius: "6px",
+                    color: "#991b1b",
+                    fontSize: "0.95rem",
+                  }}
+                >
+                  {liveError}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Log */}

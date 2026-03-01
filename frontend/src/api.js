@@ -134,3 +134,17 @@ export async function predictModelSamples(name, n = 5) {
   });
   return res.json();
 }
+
+export async function transcribeAudio(name, audioBlob) {
+  const form = new FormData();
+  form.append("audio", audioBlob, "recording.wav");
+  const res = await fetch(
+    `/api/models/${encodeURIComponent(name)}/transcribe`,
+    { method: "POST", body: form }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || err.error || "Transcription failed");
+  }
+  return res.json();
+}

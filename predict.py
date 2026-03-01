@@ -30,13 +30,37 @@ def scan_samples(dataset_dirs):
     return samples
 
 
+def transcribe_file(model_dir, audio_path):
+    """Load model and transcribe a single audio file."""
+    processor = WhisperProcessor.from_pretrained(model_dir)
+    model = WhisperForConditionalGeneration.from_pretrained(model_dir)
+    model.eval()
+    audio, sr = librosa.load(audio_path, sr=16000)
+    inputs = processor.feature_extractor(audio, sampling_rate=16000, return_tensors="pt")
+    with torch.no_grad():
+        predicted_ids = model.generate(inputs.input_features)
+    predicted = processor.tokenizer.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+    return predicted.strip()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_dir", type=str, default="userdata/models/v1")
-    parser.add_argument("--dataset_dirs", type=str, nargs="+", required=True,
+    parser.add_argument("--dataset_dirs", type=str, nargs="+",
                         help="Dataset directories (each with labels.csv, recorded_samples.csv, audio_files/)")
+    parser.add_argument("--audio_file", type=str,
+                        help="Single audio file to transcribe")
     parser.add_argument("--n", type=int, default=5)
     args = parser.parse_args()
+
+    # Single-file transcription mode
+    if args.audio_file:
+        predicted = transcribe_file(args.model_dir, args.audio_file)
+        print(json.dumps({"predicted": predicted}, ensure_ascii=False))
+        return
+
+    if not args.dataset_dirs:
+        parser.error("--dataset_dirs is required when --audio_file is not provided")
 
     samples = scan_samples(args.dataset_dirs)
 
