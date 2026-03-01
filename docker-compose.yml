@@ -3,6 +3,7 @@ services:
     build: .
     ports:
       - "7860:7860"
+      - "6006:6006"
     volumes:
       - ./userdata:/app/userdata
     deploy:
