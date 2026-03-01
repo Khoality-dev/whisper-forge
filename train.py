@@ -1,6 +1,7 @@
 import argparse
 import csv
 import glob
+import os
 import shutil
 import numpy as np
 from datasets import Dataset, Audio
@@ -19,13 +20,11 @@ from jiwer import wer
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Fine-tune Whisper base model")
-    parser.add_argument("--labels", type=str, default="userdata/dataset/labels.csv",
-                        help="Path to labels CSV (id|language|text)")
-    parser.add_argument("--recordings", type=str, default="userdata/dataset/recorded_samples.csv",
-                        help="Path to recordings CSV (audio|label_id)")
+    parser.add_argument("--dataset_dirs", type=str, nargs="+", required=True,
+                        help="Dataset directories (each with labels.csv, recorded_samples.csv, audio_files/)")
     parser.add_argument("--val_split", type=float, default=0.1,
                         help="Fraction of data to use for validation")
-    parser.add_argument("--output_dir", type=str, default="userdata/outputs",
+    parser.add_argument("--output_dir", type=str, default="userdata/models/v1",
                         help="Where to save the final model")
     parser.add_argument("--train_batch_size", type=int, default=8)
     parser.add_argument("--eval_batch_size", type=int, default=8)
@@ -39,34 +38,50 @@ def parse_args():
     return parser.parse_args()
 
 
+def scan_samples(dataset_dirs):
+    """Read labels.csv + recorded_samples.csv from each dataset dir, return joined list."""
+    rows = []
+    for ds_dir in dataset_dirs:
+        labels_path = os.path.join(ds_dir, "labels.csv")
+        recordings_path = os.path.join(ds_dir, "recorded_samples.csv")
+        if not os.path.exists(labels_path) or not os.path.exists(recordings_path):
+            continue
+
+        with open(labels_path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f, delimiter="|", quoting=csv.QUOTE_NONE)
+            id_to_text = {row["id"]: row["text"] for row in reader}
+
+        with open(recordings_path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f, delimiter="|", quoting=csv.QUOTE_NONE)
+            for row in reader:
+                text = id_to_text.get(row["label_id"])
+                if text is not None:
+                    rows.append({"audio": row["audio"], "text": text})
+    return rows
+
+
 def main():
     args = parse_args()
 
     # Load model and processor
     model_id = f"openai/whisper-base"
     tokenizer = WhisperTokenizer.from_pretrained(model_id, language=None, task='transcribe')
-    
+
     processor = WhisperProcessor.from_pretrained(model_id, language=None, task='transcribe')
-    
+
     model = WhisperForConditionalGeneration.from_pretrained(model_id)
-    
+
     model.generation_config.task = 'transcribe'
-    
+
     model.generation_config.forced_decoder_ids = None
 
+    # Scan dataset directories for samples
+    rows = scan_samples(args.dataset_dirs)
+    if not rows:
+        print("No samples found in the specified directories.")
+        return
 
-    # Load and join labels + recordings
-    with open(args.labels, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f, delimiter="|", quoting=csv.QUOTE_NONE)
-        id_to_text = {row["id"]: row["text"] for row in reader}
-
-    with open(args.recordings, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f, delimiter="|", quoting=csv.QUOTE_NONE)
-        rows = []
-        for row in reader:
-            text = id_to_text.get(row["label_id"])
-            if text is not None:
-                rows.append({"audio": row["audio"], "text": text})
+    print(f"Found {len(rows)} samples across {len(args.dataset_dirs)} dataset(s).")
 
     ds = Dataset.from_list(rows)
     ds = ds.cast_column("audio", Audio(sampling_rate=16_000))
@@ -101,20 +116,20 @@ def main():
 
     # Metric computation
     metric = evaluate.load('wer')
-    
+
     def compute_metrics(pred):
         pred_ids = pred.predictions
         label_ids = pred.label_ids
-    
+
         # replace -100 with the pad_token_id
         label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
-    
+
         # we do not want to group tokens when computing the metrics
         pred_str = processor.tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
         label_str = processor.tokenizer.batch_decode(label_ids, skip_special_tokens=True)
-    
+
         wer = 100 * metric.compute(predictions=pred_str, references=label_str)
-    
+
         return {'wer': wer}
 
     # Training arguments

@@ -13,6 +13,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py train.py predict.py data_collators.py ./
 COPY --from=frontend /static ./static/
-RUN mkdir -p userdata/labels userdata/dataset/audio_files
+RUN mkdir -p userdata/datasets userdata/models
 EXPOSE 7860
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860"]

@@ -1,63 +1,34 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
-import { fetchDataset, saveRecording } from "../api";
+import React, { useState, useEffect, useRef } from "react";
+import { fetchDatasets, saveRecording } from "../api";
 
 const styles = {
-  langSelect: {
+  row: {
     display: "flex",
     gap: "12px",
-    flexWrap: "wrap",
-    marginBottom: "20px",
     alignItems: "center",
+    marginBottom: "20px",
   },
-  langLabel: {
+  label: {
     fontSize: "0.9rem",
     color: "#555",
     fontWeight: 500,
   },
-  chip: (active) => ({
-    padding: "6px 16px",
-    borderRadius: "20px",
-    fontSize: "0.85rem",
-    fontWeight: 500,
-    cursor: "pointer",
-    border: active ? "1px solid #2563eb" : "1px solid #d1d5db",
-    background: active ? "#eff6ff" : "#fff",
-    color: active ? "#2563eb" : "#666",
-    userSelect: "none",
-  }),
-  progress: {
-    marginBottom: "20px",
-  },
-  progressText: {
+  select: {
+    padding: "7px 12px",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
     fontSize: "0.9rem",
-    color: "#666",
-    marginBottom: "6px",
+    outline: "none",
+    minWidth: "200px",
   },
-  progressBar: {
+  textInput: {
+    padding: "10px 14px",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
+    fontSize: "1rem",
+    outline: "none",
     width: "100%",
-    height: "8px",
-    background: "#e0e0e0",
-    borderRadius: "4px",
-    overflow: "hidden",
-  },
-  progressFill: (ratio) => ({
-    width: `${ratio * 100}%`,
-    height: "100%",
-    background: "#2563eb",
-    transition: "width 0.3s",
-  }),
-  sentence: {
-    fontSize: "1.4rem",
-    lineHeight: 1.6,
-    padding: "32px 24px",
-    background: "#f8f9fa",
-    borderRadius: "8px",
-    marginBottom: "20px",
-    minHeight: "80px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    textAlign: "center",
+    marginBottom: "16px",
   },
   audio: {
     width: "100%",
@@ -99,98 +70,46 @@ const styles = {
     color: "#9ca3af",
     fontSize: "0.95rem",
   },
-  done: {
-    textAlign: "center",
-    padding: "48px 24px",
-    color: "#16a34a",
-    fontSize: "1.1rem",
-    fontWeight: 500,
+  badge: {
+    fontSize: "0.75rem",
+    color: "#6b7280",
+    background: "#e5e7eb",
+    padding: "2px 8px",
+    borderRadius: "10px",
   },
 };
 
 export default function Collect() {
-  const [groups, setGroups] = useState([]);
+  const [datasets, setDatasets] = useState([]);
+  const [selectedDataset, setSelectedDataset] = useState("");
+  const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
-  const [selectedLangs, setSelectedLangs] = useState(null);
-  const [skipped, setSkipped] = useState(new Set());
 
   // Recording state
   const [recording, setRecording] = useState(false);
   const [audioURL, setAudioURL] = useState(null);
   const [audioBlob, setAudioBlob] = useState(null);
-  const [status, setStatus] = useState("Select languages and click Record.");
+  const [status, setStatus] = useState("Type a sentence and click Record.");
   const [saving, setSaving] = useState(false);
 
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
 
-  const loadData = async () => {
-    const data = await fetchDataset();
-    setGroups(data.groups);
-    if (selectedLangs === null && data.groups.length > 0) {
-      setSelectedLangs(new Set(data.groups.map((g) => g.language)));
+  const loadDatasets = async () => {
+    const data = await fetchDatasets();
+    const dsList = data.datasets || [];
+    setDatasets(dsList);
+    if (!selectedDataset && dsList.length > 0) {
+      setSelectedDataset(dsList[0].name);
     }
     setLoading(false);
   };
 
   useEffect(() => {
-    loadData();
+    loadDatasets();
   }, []);
 
-  const activeLangs = selectedLangs || new Set();
-
-  // Pending labels: from selected languages, no recordings, not skipped
-  const pending = useMemo(() => {
-    const items = [];
-    for (const group of groups) {
-      if (!activeLangs.has(group.language)) continue;
-      for (const sent of group.sentences) {
-        if (sent.recordings.length === 0 && !skipped.has(sent.id)) {
-          items.push({ id: sent.id, language: group.language, text: sent.text });
-        }
-      }
-    }
-    return items;
-  }, [groups, activeLangs, skipped]);
-
-  // Stats for selected languages
-  const totalSelected = useMemo(() => {
-    let count = 0;
-    for (const g of groups) {
-      if (activeLangs.has(g.language)) count += g.sentences.length;
-    }
-    return count;
-  }, [groups, activeLangs]);
-
-  const recordedCount = useMemo(() => {
-    let count = 0;
-    for (const g of groups) {
-      if (!activeLangs.has(g.language)) continue;
-      for (const s of g.sentences) {
-        if (s.recordings.length > 0) count++;
-      }
-    }
-    return count;
-  }, [groups, activeLangs]);
-
-  const current = pending.length > 0 ? pending[0] : null;
-  const finished = totalSelected > 0 && pending.length === 0;
-  const ratio = totalSelected > 0 ? recordedCount / totalSelected : 0;
-
-  // ── Language selection ──
-
-  const toggleLang = (language) => {
-    setSelectedLangs((prev) => {
-      const next = new Set(prev);
-      if (next.has(language)) next.delete(language);
-      else next.add(language);
-      return next;
-    });
-    setSkipped(new Set());
-    clearAudio();
-  };
-
-  // ── Recording ──
+  const selectedCount = datasets.find((d) => d.name === selectedDataset)?.count || 0;
 
   const clearAudio = () => {
     setAudioURL(null);
@@ -241,14 +160,15 @@ export default function Collect() {
   };
 
   const handleSave = async () => {
-    if (!audioBlob || !current) return;
+    if (!audioBlob || !selectedDataset || !text.trim()) return;
     setSaving(true);
     setStatus("Saving...");
     try {
-      await saveRecording(audioBlob, current.id);
+      await saveRecording(selectedDataset, audioBlob, text.trim());
       clearAudio();
-      setStatus("Saved! Moved to next label.");
-      await loadData();
+      setText("");
+      setStatus("Saved! Ready for next recording.");
+      await loadDatasets();
     } catch (err) {
       setStatus(`Error saving: ${err.message}`);
     } finally {
@@ -256,129 +176,96 @@ export default function Collect() {
     }
   };
 
-  const handleSkip = () => {
-    if (!current) return;
-    setSkipped((prev) => new Set([...prev, current.id]));
-    clearAudio();
-    setStatus("Skipped.");
-  };
-
-  const handleRerecord = () => {
+  const handleDiscard = () => {
     clearAudio();
     setStatus("Discarded. Click Record to try again.");
   };
 
   if (loading) return <div style={styles.empty}>Loading...</div>;
 
-  if (groups.length === 0) {
+  if (datasets.length === 0) {
     return (
       <div style={styles.empty}>
-        No languages found. Go to the Dataset tab to add languages and labels
-        first.
+        No datasets found. Go to the Dataset tab to create one first.
       </div>
     );
   }
 
   const hasAudio = audioURL !== null;
-  const noLangsSelected = activeLangs.size === 0;
+  const canSave = hasAudio && !saving && text.trim() && selectedDataset;
 
   return (
     <div>
-      {/* Language selection */}
-      <div style={styles.langSelect}>
-        <span style={styles.langLabel}>Languages:</span>
-        {groups.map((g) => (
-          <span
-            key={g.language}
-            style={styles.chip(activeLangs.has(g.language))}
-            onClick={() => toggleLang(g.language)}
-          >
-            {g.language}
-          </span>
-        ))}
+      {/* Dataset selector */}
+      <div style={styles.row}>
+        <span style={styles.label}>Dataset:</span>
+        <select
+          style={styles.select}
+          value={selectedDataset}
+          onChange={(e) => setSelectedDataset(e.target.value)}
+        >
+          {datasets.map((ds) => (
+            <option key={ds.name} value={ds.name}>
+              {ds.name} ({ds.count} samples)
+            </option>
+          ))}
+        </select>
+        <span style={styles.badge}>{selectedCount} samples</span>
       </div>
 
-      {noLangsSelected ? (
-        <div style={styles.empty}>Select at least one language to start.</div>
-      ) : (
-        <>
-          {/* Progress */}
-          <div style={styles.progress}>
-            <div style={styles.progressText}>
-              {recordedCount} / {totalSelected} labels recorded
-              {skipped.size > 0 && ` (${skipped.size} skipped)`}
-            </div>
-            <div style={styles.progressBar}>
-              <div style={styles.progressFill(ratio)} />
-            </div>
-          </div>
+      {/* Text input */}
+      <input
+        style={styles.textInput}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Type the sentence to record..."
+        disabled={recording}
+      />
 
-          {/* Current label or done */}
-          {finished ? (
-            <div style={styles.done}>
-              All labels have been recorded!
-            </div>
-          ) : current ? (
-            <>
-              <div style={styles.sentence}>{current.text}</div>
+      {/* Audio playback */}
+      {audioURL && <audio style={styles.audio} src={audioURL} controls />}
 
-              {audioURL && (
-                <audio style={styles.audio} src={audioURL} controls />
-              )}
+      {/* Buttons */}
+      <div style={styles.buttons}>
+        {!recording ? (
+          <button
+            style={{
+              ...styles.btn("primary"),
+              ...(!text.trim() ? styles.btnDisabled : {}),
+            }}
+            onClick={startRecording}
+            disabled={!text.trim()}
+          >
+            Record
+          </button>
+        ) : (
+          <button style={styles.btn("danger")} onClick={stopRecording}>
+            Stop
+          </button>
+        )}
+        <button
+          style={{
+            ...styles.btn("primary"),
+            ...(!canSave ? styles.btnDisabled : {}),
+          }}
+          onClick={handleSave}
+          disabled={!canSave}
+        >
+          {saving ? "Saving..." : "Save"}
+        </button>
+        <button
+          style={{
+            ...styles.btn("default"),
+            ...(!hasAudio ? styles.btnDisabled : {}),
+          }}
+          onClick={handleDiscard}
+          disabled={!hasAudio}
+        >
+          Discard
+        </button>
+      </div>
 
-              <div style={styles.buttons}>
-                {!recording ? (
-                  <button
-                    style={styles.btn("primary")}
-                    onClick={startRecording}
-                  >
-                    Record
-                  </button>
-                ) : (
-                  <button
-                    style={styles.btn("danger")}
-                    onClick={stopRecording}
-                  >
-                    Stop
-                  </button>
-                )}
-                <button
-                  style={{
-                    ...styles.btn("primary"),
-                    ...(!hasAudio || saving ? styles.btnDisabled : {}),
-                  }}
-                  onClick={handleSave}
-                  disabled={!hasAudio || saving}
-                >
-                  {saving ? "Saving..." : "Save"}
-                </button>
-                <button
-                  style={{
-                    ...styles.btn("default"),
-                    ...(!hasAudio ? styles.btnDisabled : {}),
-                  }}
-                  onClick={handleRerecord}
-                  disabled={!hasAudio}
-                >
-                  Re-record
-                </button>
-                <button
-                  style={{
-                    ...styles.btn("default"),
-                    ...(recording ? styles.btnDisabled : {}),
-                  }}
-                  onClick={handleSkip}
-                  disabled={recording}
-                >
-                  Skip
-                </button>
-              </div>
-
-              <div style={styles.status}>{status}</div>
-            </>
-          ) : null}
-        </>
-      )}
+      <div style={styles.status}>{status}</div>
     </div>
   );
 }

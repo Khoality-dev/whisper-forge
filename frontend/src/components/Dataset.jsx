@@ -1,16 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
-  fetchDataset,
-  createLanguage,
-  deleteLanguage,
-  addLabel,
-  removeLabel,
-  saveRecording,
+  fetchDatasets,
+  createDataset,
+  deleteDataset,
+  fetchDatasetSamples,
   deleteRecording,
+  uploadToDataset,
 } from "../api";
 
 const styles = {
-  // ── List view ──
   summary: {
     display: "flex",
     gap: "16px",
@@ -28,7 +26,7 @@ const styles = {
     fontWeight: 600,
     color: "#111",
   },
-  addLangForm: {
+  addForm: {
     display: "flex",
     gap: "8px",
     alignItems: "center",
@@ -40,7 +38,7 @@ const styles = {
     fontSize: "0.9rem",
     outline: "none",
   },
-  langCard: {
+  card: {
     border: "1px solid #e5e7eb",
     borderRadius: "8px",
     marginBottom: "12px",
@@ -51,7 +49,7 @@ const styles = {
     cursor: "pointer",
     transition: "background 0.15s",
   },
-  langName: {
+  cardName: {
     fontWeight: 600,
     fontSize: "1rem",
     flex: 1,
@@ -73,8 +71,6 @@ const styles = {
     color: "#9ca3af",
     fontSize: "0.95rem",
   },
-
-  // ── Detail view ──
   backBtn: {
     padding: "5px 12px",
     border: "1px solid #d1d5db",
@@ -97,81 +93,24 @@ const styles = {
     fontSize: "1.2rem",
     flex: 1,
   },
-  inputWide: {
-    padding: "7px 12px",
-    border: "1px solid #d1d5db",
-    borderRadius: "6px",
-    fontSize: "0.9rem",
-    outline: "none",
-    flex: 1,
-  },
-  labelRow: {
+  sampleRow: {
     border: "1px solid #f3f4f6",
     borderRadius: "6px",
     padding: "10px 14px",
     marginBottom: "8px",
-  },
-  labelHeader: {
     display: "flex",
-    alignItems: "flex-start",
-    gap: "8px",
+    alignItems: "center",
+    gap: "10px",
   },
-  labelText: {
+  sampleText: {
     flex: 1,
     fontSize: "0.9rem",
     lineHeight: 1.5,
     color: "#1f2937",
   },
-  recordingRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: "6px",
-    marginTop: "6px",
-    paddingLeft: "12px",
-  },
   audioPlayer: {
     height: "30px",
-    flex: 1,
-    maxWidth: "400px",
-  },
-  recorderInline: {
-    marginTop: "8px",
-    paddingLeft: "12px",
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    flexWrap: "wrap",
-  },
-  recordingIndicator: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "6px",
-    color: "#dc2626",
-    fontSize: "0.85rem",
-    fontWeight: 500,
-  },
-  redDot: {
-    width: "8px",
-    height: "8px",
-    borderRadius: "50%",
-    background: "#dc2626",
-    display: "inline-block",
-  },
-  recordBtn: {
-    marginTop: "6px",
-    padding: "4px 12px",
-    fontSize: "0.8rem",
-    background: "none",
-    border: "1px solid #2563eb",
-    color: "#2563eb",
-    borderRadius: "4px",
-    cursor: "pointer",
-  },
-  addLabelRow: {
-    display: "flex",
-    gap: "8px",
-    marginTop: "12px",
-    alignItems: "center",
+    maxWidth: "300px",
   },
   btnPrimary: {
     padding: "5px 12px",
@@ -203,15 +142,6 @@ const styles = {
     background: "#e5e7eb",
     color: "#333",
   },
-  btnSmall: {
-    padding: "3px 8px",
-    border: "none",
-    borderRadius: "4px",
-    fontSize: "0.75rem",
-    cursor: "pointer",
-    background: "#f3f4f6",
-    color: "#6b7280",
-  },
   btnSmallDanger: {
     padding: "3px 8px",
     border: "none",
@@ -221,436 +151,275 @@ const styles = {
     background: "#fef2f2",
     color: "#dc2626",
   },
-  disabled: {
-    opacity: 0.5,
-    cursor: "not-allowed",
+  uploadArea: {
+    display: "flex",
+    gap: "8px",
+    alignItems: "center",
+    marginBottom: "16px",
   },
 };
 
+const PAGE_SIZE = 100;
+
 export default function Dataset() {
-  const [groups, setGroups] = useState([]);
+  const [datasets, setDatasets] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedLang, setSelectedLang] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [samples, setSamples] = useState([]);
+  const [totalSamples, setTotalSamples] = useState(0);
+  const [page, setPage] = useState(0);
 
-  // Language management
-  const [showAddLang, setShowAddLang] = useState(false);
-  const [newLangName, setNewLangName] = useState("");
-  const [labelInput, setLabelInput] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
 
-  // Recording
-  const [recordingFor, setRecordingFor] = useState(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordedAudio, setRecordedAudio] = useState(null);
-  const [saving, setSaving] = useState(false);
-
-  const mediaRecorderRef = useRef(null);
-  const chunksRef = useRef([]);
-
-  const loadData = async () => {
-    const data = await fetchDataset();
-    setGroups(data.groups);
+  const loadDatasets = async () => {
+    const data = await fetchDatasets();
+    setDatasets(data.datasets || []);
     setLoading(false);
   };
 
+  const loadSamples = async (name, p = 0) => {
+    const data = await fetchDatasetSamples(name, p * PAGE_SIZE, PAGE_SIZE);
+    setSamples(data.samples || []);
+    setTotalSamples(data.total || 0);
+  };
+
   useEffect(() => {
-    loadData();
+    loadDatasets();
   }, []);
 
-  const currentGroup = groups.find((g) => g.language === selectedLang);
+  useEffect(() => {
+    if (selected) {
+      setPage(0);
+      loadSamples(selected, 0);
+    }
+  }, [selected]);
 
-  // ── Language management ──
+  useEffect(() => {
+    if (selected) loadSamples(selected, page);
+  }, [page]);
 
-  const handleCreateLang = async () => {
-    const name = newLangName.trim();
+  const handleCreate = async () => {
+    const name = newName.trim();
     if (!name) return;
-    await createLanguage(name);
-    setNewLangName("");
-    setShowAddLang(false);
-    loadData();
-  };
-
-  const handleDeleteLang = async (language) => {
-    if (
-      !confirm(
-        `Delete "${language}" and all its labels and recordings?`
-      )
-    )
+    const res = await createDataset(name);
+    if (res.error) {
+      alert(res.error);
       return;
-    await deleteLanguage(language);
-    setSelectedLang(null);
-    loadData();
-  };
-
-  // ── Label management ──
-
-  const handleAddLabel = async () => {
-    const text = labelInput.trim();
-    if (!text || !selectedLang) return;
-    await addLabel(selectedLang, text);
-    setLabelInput("");
-    loadData();
-  };
-
-  const handleRemoveLabel = async (id) => {
-    if (!confirm("Remove this label and its recordings?")) return;
-    await removeLabel(id);
-    loadData();
-  };
-
-  // ── Recording ──
-
-  const startRec = async (labelId, replaceFilename = null) => {
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.ondataavailable = null;
-      mediaRecorderRef.current.onstop = null;
-      if (mediaRecorderRef.current.state !== "inactive") {
-        mediaRecorderRef.current.stop();
-      }
     }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
-      chunksRef.current = [];
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: "audio/wav" });
-        setRecordedAudio({ url: URL.createObjectURL(blob), blob });
-        stream.getTracks().forEach((t) => t.stop());
-      };
-
-      recorder.start();
-      setRecordingFor({ labelId, replaceFilename });
-      setIsRecording(true);
-      setRecordedAudio(null);
-    } catch {
-      alert("Microphone access denied. Please allow microphone access.");
-    }
+    setNewName("");
+    setShowAdd(false);
+    loadDatasets();
   };
 
-  const stopRec = () => {
-    if (mediaRecorderRef.current?.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
-    setIsRecording(false);
+  const handleDelete = async (name) => {
+    if (!confirm(`Delete dataset "${name}" and all its samples?`)) return;
+    await deleteDataset(name);
+    if (selected === name) setSelected(null);
+    loadDatasets();
   };
 
-  const handleSaveRecording = async () => {
-    if (!recordedAudio || !recordingFor) return;
-    setSaving(true);
-    try {
-      await saveRecording(
-        recordedAudio.blob,
-        recordingFor.labelId,
-        recordingFor.replaceFilename
-      );
-      setRecordingFor(null);
-      setRecordedAudio(null);
-      await loadData();
-    } catch (err) {
-      alert(`Error saving: ${err.message}`);
-    } finally {
-      setSaving(false);
-    }
+  const handleDeleteSample = async (sampleName) => {
+    if (!confirm("Delete this sample?")) return;
+    await deleteRecording(selected, sampleName);
+    loadSamples(selected, page);
+    loadDatasets();
   };
 
-  const cancelRec = () => {
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.ondataavailable = null;
-      mediaRecorderRef.current.onstop = null;
-      if (mediaRecorderRef.current.state !== "inactive") {
-        mediaRecorderRef.current.stop();
-      }
-    }
-    setIsRecording(false);
-    setRecordingFor(null);
-    setRecordedAudio(null);
+  const handleUpload = async (e) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    await uploadToDataset(selected, files);
+    setUploading(false);
+    loadSamples(selected, page);
+    loadDatasets();
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const handleDeleteRecording = async (filename) => {
-    if (!confirm("Delete this recording?")) return;
-    await deleteRecording(filename);
-    loadData();
-  };
-
-  // ── Stats ──
-
-  const totalLabels = groups.reduce((sum, g) => sum + g.sentences.length, 0);
-  const totalRecordings = groups.reduce(
-    (sum, g) =>
-      sum + g.sentences.reduce((s, sent) => s + sent.recordings.length, 0),
-    0
-  );
-  const recordedLabels = groups.reduce(
-    (sum, g) =>
-      sum + g.sentences.filter((s) => s.recordings.length > 0).length,
-    0
-  );
-
-  if (loading) return <div style={styles.empty}>Loading dataset...</div>;
+  if (loading) return <div style={styles.empty}>Loading datasets...</div>;
 
   // ═══════════════════════════════════════════════════
-  //  Detail view — labels & recordings for one language
+  //  Detail view — samples for one dataset
   // ═══════════════════════════════════════════════════
 
-  if (selectedLang && currentGroup) {
-    const groupLabels = currentGroup.sentences;
-    const groupRecordings = groupLabels.reduce(
-      (s, l) => s + l.recordings.length,
-      0
-    );
-    const groupRecorded = groupLabels.filter(
-      (l) => l.recordings.length > 0
-    ).length;
-
+  if (selected) {
     return (
       <div>
-        <button
-          style={styles.backBtn}
-          onClick={() => {
-            cancelRec();
-            setSelectedLang(null);
-          }}
-        >
+        <button style={styles.backBtn} onClick={() => setSelected(null)}>
           &larr; Back
         </button>
 
         <div style={styles.detailHeader}>
-          <span style={styles.detailTitle}>
-            {currentGroup.language}
-          </span>
+          <span style={styles.detailTitle}>{selected}</span>
           <span style={styles.badge}>
-            {groupRecorded} / {groupLabels.length} recorded
-          </span>
-          <span style={styles.badge}>
-            {groupRecordings} recording{groupRecordings !== 1 ? "s" : ""}
+            {totalSamples} sample{totalSamples !== 1 ? "s" : ""}
           </span>
           <button
-            style={styles.btnSmallDanger}
-            onClick={() => handleDeleteLang(currentGroup.language)}
+            style={styles.btnDefault}
+            onClick={() => {
+              window.location.href = `/api/datasets/${encodeURIComponent(selected)}/download`;
+            }}
           >
-            Delete Language
+            Export
+          </button>
+          <button
+            style={styles.btnSmallDanger}
+            onClick={() => handleDelete(selected)}
+          >
+            Delete Dataset
           </button>
         </div>
 
-        {/* Labels */}
-        {groupLabels.length === 0 && (
-          <div style={styles.empty}>No labels yet. Add one below.</div>
+        {/* Upload */}
+        <div style={styles.uploadArea}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".wav,.txt,.zip"
+            onChange={handleUpload}
+            style={{ fontSize: "0.85rem" }}
+          />
+          {uploading && (
+            <span style={{ fontSize: "0.85rem", color: "#666" }}>
+              Uploading...
+            </span>
+          )}
+        </div>
+
+        {samples.length === 0 && totalSamples === 0 && (
+          <div style={styles.empty}>
+            No samples yet. Upload files or record in the Collect tab.
+          </div>
         )}
 
-        {groupLabels.map((sent) => (
-          <div key={sent.id} style={styles.labelRow}>
-            <div style={styles.labelHeader}>
-              <span style={styles.labelText}>{sent.text}</span>
-              <button
-                style={styles.btnSmallDanger}
-                onClick={() => handleRemoveLabel(sent.id)}
-              >
-                Remove
-              </button>
-            </div>
-
-            {/* Existing recordings */}
-            {sent.recordings.map((rec) => (
-              <div key={rec.filename} style={styles.recordingRow}>
-                <audio
-                  src={`/api/audio/${rec.filename}`}
-                  controls
-                  preload="none"
-                  style={styles.audioPlayer}
-                />
-                <button
-                  style={styles.btnSmall}
-                  onClick={() => startRec(sent.id, rec.filename)}
-                >
-                  Re-record
-                </button>
-                <button
-                  style={styles.btnSmallDanger}
-                  onClick={() => handleDeleteRecording(rec.filename)}
-                >
-                  Delete
-                </button>
-              </div>
-            ))}
-
-            {/* Inline recorder */}
-            {recordingFor && recordingFor.labelId === sent.id ? (
-              <div style={styles.recorderInline}>
-                {isRecording ? (
-                  <>
-                    <span style={styles.recordingIndicator}>
-                      <span style={styles.redDot} />
-                      Recording...
-                    </span>
-                    <button style={styles.btnDanger} onClick={stopRec}>
-                      Stop
-                    </button>
-                    <button style={styles.btnDefault} onClick={cancelRec}>
-                      Cancel
-                    </button>
-                  </>
-                ) : recordedAudio ? (
-                  <>
-                    <audio
-                      src={recordedAudio.url}
-                      controls
-                      style={styles.audioPlayer}
-                    />
-                    <button
-                      style={{
-                        ...styles.btnPrimary,
-                        ...(saving ? styles.disabled : {}),
-                      }}
-                      onClick={handleSaveRecording}
-                      disabled={saving}
-                    >
-                      {saving ? "Saving..." : "Save"}
-                    </button>
-                    <button style={styles.btnDefault} onClick={cancelRec}>
-                      Cancel
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            ) : (
-              <button
-                style={styles.recordBtn}
-                onClick={() => startRec(sent.id)}
-              >
-                Record
-              </button>
-            )}
+        {samples.map((s) => (
+          <div key={s.filename} style={styles.sampleRow}>
+            <audio
+              src={`/api/audio/${encodeURIComponent(selected)}/${s.filename}`}
+              controls
+              preload="none"
+              style={styles.audioPlayer}
+            />
+            <span style={styles.sampleText}>{s.text || "(no text)"}</span>
+            <button
+              style={styles.btnSmallDanger}
+              onClick={() => handleDeleteSample(s.filename)}
+            >
+              Delete
+            </button>
           </div>
         ))}
 
-        {/* Add label */}
-        <div style={styles.addLabelRow}>
-          <input
-            style={styles.inputWide}
-            value={labelInput}
-            onChange={(e) => setLabelInput(e.target.value)}
-            placeholder="Add a label..."
-            onKeyDown={(e) => e.key === "Enter" && handleAddLabel()}
-          />
-          <button style={styles.btnPrimary} onClick={handleAddLabel}>
-            Add
-          </button>
-        </div>
+        {/* Pagination */}
+        {totalSamples > PAGE_SIZE && (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "12px",
+            marginTop: "16px",
+            fontSize: "0.9rem",
+          }}>
+            <button
+              style={{ ...styles.btnDefault, ...(page === 0 ? { opacity: 0.4, cursor: "not-allowed" } : {}) }}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+            >
+              Prev
+            </button>
+            <span style={{ color: "#666" }}>
+              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalSamples)} of {totalSamples}
+            </span>
+            <button
+              style={{ ...styles.btnDefault, ...((page + 1) * PAGE_SIZE >= totalSamples ? { opacity: 0.4, cursor: "not-allowed" } : {}) }}
+              onClick={() => setPage((p) => p + 1)}
+              disabled={(page + 1) * PAGE_SIZE >= totalSamples}
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
     );
   }
 
   // ═══════════════════════════════════════════════════
-  //  List view — all languages
+  //  List view — all datasets
   // ═══════════════════════════════════════════════════
+
+  const allSamplesCount = datasets.reduce((sum, d) => sum + d.count, 0);
 
   return (
     <div>
-      {/* Summary */}
       <div style={styles.summary}>
         <div style={styles.summaryItem}>
-          <span style={styles.summaryValue}>{groups.length}</span> language
-          {groups.length !== 1 ? "s" : ""}
+          <span style={styles.summaryValue}>{datasets.length}</span> dataset
+          {datasets.length !== 1 ? "s" : ""}
         </div>
         <div style={styles.summaryItem}>
-          <span style={styles.summaryValue}>{totalLabels}</span> label
-          {totalLabels !== 1 ? "s" : ""}
-        </div>
-        <div style={styles.summaryItem}>
-          <span style={styles.summaryValue}>{recordedLabels}</span> /{" "}
-          {totalLabels} recorded
-        </div>
-        <div style={styles.summaryItem}>
-          <span style={styles.summaryValue}>{totalRecordings}</span> recording
-          {totalRecordings !== 1 ? "s" : ""}
+          <span style={styles.summaryValue}>{allSamplesCount}</span> total sample
+          {allSamplesCount !== 1 ? "s" : ""}
         </div>
       </div>
 
-      {/* Add language */}
       <div style={{ marginBottom: "16px" }}>
-        {showAddLang ? (
-          <div style={styles.addLangForm}>
+        {showAdd ? (
+          <div style={styles.addForm}>
             <input
               style={styles.input}
-              value={newLangName}
-              onChange={(e) => setNewLangName(e.target.value)}
-              placeholder="Language name"
-              onKeyDown={(e) => e.key === "Enter" && handleCreateLang()}
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Dataset name"
+              onKeyDown={(e) => e.key === "Enter" && handleCreate()}
               autoFocus
             />
-            <button style={styles.btnPrimary} onClick={handleCreateLang}>
+            <button style={styles.btnPrimary} onClick={handleCreate}>
               Create
             </button>
             <button
               style={styles.btnDefault}
               onClick={() => {
-                setShowAddLang(false);
-                setNewLangName("");
+                setShowAdd(false);
+                setNewName("");
               }}
             >
               Cancel
             </button>
           </div>
         ) : (
-          <button
-            style={styles.btnPrimary}
-            onClick={() => setShowAddLang(true)}
-          >
-            + Add Language
+          <button style={styles.btnPrimary} onClick={() => setShowAdd(true)}>
+            + New Dataset
           </button>
         )}
       </div>
 
-      {/* Empty state */}
-      {groups.length === 0 && (
+      {datasets.length === 0 && (
         <div style={styles.empty}>
-          No languages yet. Add a language to get started.
+          No datasets yet. Create a dataset to get started.
         </div>
       )}
 
-      {/* Language cards */}
-      {groups.map((group) => {
-        const labelCount = group.sentences.length;
-        const recCount = group.sentences.reduce(
-          (s, l) => s + l.recordings.length,
-          0
-        );
-        const recLabels = group.sentences.filter(
-          (l) => l.recordings.length > 0
-        ).length;
-
-        return (
-          <div
-            key={group.language}
-            style={styles.langCard}
-            onClick={() => setSelectedLang(group.language)}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.background = "#f9fafb")
-            }
-            onMouseLeave={(e) => (e.currentTarget.style.background = "")}
-          >
-            <span style={styles.langName}>
-              {group.language}
-            </span>
-            <span style={styles.badge}>
-              {labelCount} label{labelCount !== 1 ? "s" : ""}
-            </span>
-            <span style={styles.badge}>
-              {recLabels} / {labelCount} recorded
-            </span>
-            <span style={styles.badge}>
-              {recCount} recording{recCount !== 1 ? "s" : ""}
-            </span>
-            <span style={styles.arrow}>&rsaquo;</span>
-          </div>
-        );
-      })}
+      {datasets.map((ds) => (
+        <div
+          key={ds.name}
+          style={styles.card}
+          onClick={() => setSelected(ds.name)}
+          onMouseEnter={(e) =>
+            (e.currentTarget.style.background = "#f9fafb")
+          }
+          onMouseLeave={(e) => (e.currentTarget.style.background = "")}
+        >
+          <span style={styles.cardName}>{ds.name}</span>
+          <span style={styles.badge}>
+            {ds.count} sample{ds.count !== 1 ? "s" : ""}
+          </span>
+          <span style={styles.arrow}>&rsaquo;</span>
+        </div>
+      ))}
     </div>
   );
 }

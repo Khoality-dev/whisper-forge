@@ -1,32 +1,12 @@
-// ── Dataset ──────────────────────────────────────────────────────────────
+// ── Datasets ─────────────────────────────────────────────────────────────
 
-export async function fetchDataset() {
-  const res = await fetch("/api/dataset", { cache: "no-store" });
+export async function fetchDatasets() {
+  const res = await fetch("/api/datasets", { cache: "no-store" });
   return res.json();
 }
 
-export async function saveRecording(audioBlob, labelId, replaceFilename = null) {
-  const form = new FormData();
-  form.append("audio", audioBlob, "recording.wav");
-  form.append("label_id", labelId);
-  form.append("replace", replaceFilename || "");
-  const res = await fetch("/api/recordings", { method: "POST", body: form });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || err.error || "Failed to save recording");
-  }
-  return res.json();
-}
-
-export async function deleteRecording(filename) {
-  const res = await fetch(`/api/recordings/${filename}`, { method: "DELETE" });
-  return res.json();
-}
-
-// ── Languages ────────────────────────────────────────────────────────────
-
-export async function createLanguage(name) {
-  const res = await fetch("/api/languages", {
+export async function createDataset(name) {
+  const res = await fetch("/api/datasets", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
@@ -34,47 +14,90 @@ export async function createLanguage(name) {
   return res.json();
 }
 
-export async function deleteLanguage(name) {
-  const res = await fetch(`/api/languages/${encodeURIComponent(name)}`, {
+export async function deleteDataset(name) {
+  const res = await fetch(`/api/datasets/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
   return res.json();
 }
 
-// ── Labels ───────────────────────────────────────────────────────────────
+export async function fetchDatasetSamples(name, offset = 0, limit = 100) {
+  const params = new URLSearchParams({ offset, limit });
+  const res = await fetch(
+    `/api/datasets/${encodeURIComponent(name)}?${params}`,
+    { cache: "no-store" }
+  );
+  return res.json();
+}
 
-export async function addLabel(language, text) {
-  const res = await fetch("/api/labels/add", {
+export async function uploadToDataset(name, files) {
+  const form = new FormData();
+  for (const file of files) {
+    form.append("files", file);
+  }
+  const res = await fetch(`/api/datasets/${encodeURIComponent(name)}/upload`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ language, text }),
+    body: form,
   });
   return res.json();
 }
 
-export async function removeLabel(id) {
-  const res = await fetch("/api/labels/remove", {
+// ── Recordings ───────────────────────────────────────────────────────────
+
+export async function saveRecording(dataset, audioBlob, text, replace = "") {
+  const form = new FormData();
+  form.append("audio", audioBlob, "recording.wav");
+  form.append("text", text);
+  form.append("replace", replace);
+  const res = await fetch(
+    `/api/datasets/${encodeURIComponent(dataset)}/recordings`,
+    { method: "POST", body: form }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || err.error || "Failed to save recording");
+  }
+  return res.json();
+}
+
+export async function deleteRecording(dataset, sampleName) {
+  const res = await fetch(
+    `/api/datasets/${encodeURIComponent(dataset)}/recordings/${encodeURIComponent(sampleName)}`,
+    { method: "DELETE" }
+  );
+  return res.json();
+}
+
+// ── Models ───────────────────────────────────────────────────────────────
+
+export async function fetchModels() {
+  const res = await fetch("/api/models", { cache: "no-store" });
+  return res.json();
+}
+
+export async function createModel(name) {
+  const res = await fetch("/api/models", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id }),
+    body: JSON.stringify({ name }),
   });
   return res.json();
 }
 
-export async function getDatasetCount() {
-  const res = await fetch("/api/dataset/count");
+export async function deleteModel(name) {
+  const res = await fetch(`/api/models/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
   return res.json();
 }
 
-// ── Train config ────────────────────────────────────────────────────────
-
-export async function getTrainConfig() {
-  const res = await fetch("/api/train/config");
+export async function getModelConfig(name) {
+  const res = await fetch(`/api/models/${encodeURIComponent(name)}/config`);
   return res.json();
 }
 
-export async function saveTrainConfig(config) {
-  const res = await fetch("/api/train/config", {
+export async function saveModelConfig(name, config) {
+  const res = await fetch(`/api/models/${encodeURIComponent(name)}/config`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),
@@ -82,29 +105,29 @@ export async function saveTrainConfig(config) {
   return res.json();
 }
 
-// ── Training ────────────────────────────────────────────────────────────
+// ── Model Training ───────────────────────────────────────────────────────
 
-export async function startTraining(config) {
-  const res = await fetch("/api/train/start", {
+export async function startModelTraining(name) {
+  const res = await fetch(`/api/models/${encodeURIComponent(name)}/train`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config),
   });
   return res.json();
 }
 
-export async function stopTraining() {
-  const res = await fetch("/api/train/stop", { method: "POST" });
+export async function stopModelTraining(name) {
+  const res = await fetch(`/api/models/${encodeURIComponent(name)}/stop`, {
+    method: "POST",
+  });
   return res.json();
 }
 
-export async function getTrainStatus() {
-  const res = await fetch("/api/train/status");
+export async function getModelStatus(name) {
+  const res = await fetch(`/api/models/${encodeURIComponent(name)}/status`);
   return res.json();
 }
 
-export async function predictSamples(n = 5) {
-  const res = await fetch("/api/train/predict", {
+export async function predictModelSamples(name, n = 5) {
+  const res = await fetch(`/api/models/${encodeURIComponent(name)}/predict`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ n }),
