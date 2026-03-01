@@ -1,6 +1,7 @@
 import argparse
+import csv
 import numpy as np
-from datasets import load_dataset, Audio
+from datasets import Dataset, Audio
 from transformers import (
     WhisperProcessor,
     WhisperFeatureExtractor,
@@ -16,14 +17,14 @@ from jiwer import wer
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Fine-tune Whisper base model")
-    parser.add_argument("--csv", type=str, default="userdata/dataset/recorded_samples.csv",
-                        help="Path to the recorded samples CSV")
+    parser.add_argument("--labels", type=str, default="userdata/dataset/labels.csv",
+                        help="Path to labels CSV (id|language|text)")
+    parser.add_argument("--recordings", type=str, default="userdata/dataset/recorded_samples.csv",
+                        help="Path to recordings CSV (audio|label_id)")
     parser.add_argument("--val_split", type=float, default=0.1,
                         help="Fraction of data to use for validation")
-    parser.add_argument("--output_dir", type=str, default="whisper-finetuned",
-                        help="Where to save checkpoints and the final model")
-    parser.add_argument("--lang", type=str, default="en",
-                        help="Language code (e.g., 'en', 'de') for decoder start token")
+    parser.add_argument("--output_dir", type=str, default="userdata/outputs",
+                        help="Where to save the final model")
     parser.add_argument("--train_batch_size", type=int, default=8)
     parser.add_argument("--eval_batch_size", type=int, default=8)
     parser.add_argument("--learning_rate", type=float, default=1e-5)
@@ -41,9 +42,9 @@ def main():
 
     # Load model and processor
     model_id = f"openai/whisper-base"
-    tokenizer = WhisperTokenizer.from_pretrained(model_id, language='English', task='transcribe')
+    tokenizer = WhisperTokenizer.from_pretrained(model_id, language=None, task='transcribe')
     
-    processor = WhisperProcessor.from_pretrained(model_id, language='English', task='transcribe')
+    processor = WhisperProcessor.from_pretrained(model_id, language=None, task='transcribe')
     
     model = WhisperForConditionalGeneration.from_pretrained(model_id)
     
@@ -52,8 +53,20 @@ def main():
     model.generation_config.forced_decoder_ids = None
 
 
-    # Load dataset and split into train/val
-    ds = load_dataset("csv", data_files=args.csv, split="train")
+    # Load and join labels + recordings
+    with open(args.labels, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f, delimiter="|", quoting=csv.QUOTE_NONE)
+        id_to_text = {row["id"]: row["text"] for row in reader}
+
+    with open(args.recordings, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f, delimiter="|", quoting=csv.QUOTE_NONE)
+        rows = []
+        for row in reader:
+            text = id_to_text.get(row["label_id"])
+            if text is not None:
+                rows.append({"audio": row["audio"], "text": text})
+
+    ds = Dataset.from_list(rows)
     ds = ds.cast_column("audio", Audio(sampling_rate=16_000))
     ds = ds.train_test_split(test_size=args.val_split, seed=42)
     ds["validation"] = ds.pop("test")
@@ -117,6 +130,9 @@ def main():
         fp16=args.fp16,
         report_to=["tensorboard"],
         metric_for_best_model="wer",
+        greater_is_better=False,
+        load_best_model_at_end=True,
+        save_total_limit=1,
     )
 
     # Initialize Trainer

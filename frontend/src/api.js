@@ -1,18 +1,20 @@
 // ── Dataset ──────────────────────────────────────────────────────────────
 
 export async function fetchDataset() {
-  const res = await fetch("/api/dataset");
+  const res = await fetch("/api/dataset", { cache: "no-store" });
   return res.json();
 }
 
-export async function saveRecording(audioBlob, sentence, replaceFilename = null) {
+export async function saveRecording(audioBlob, labelId, replaceFilename = null) {
   const form = new FormData();
   form.append("audio", audioBlob, "recording.wav");
-  form.append("sentence", sentence);
-  if (replaceFilename) {
-    form.append("replace", replaceFilename);
-  }
+  form.append("label_id", labelId);
+  form.append("replace", replaceFilename || "");
   const res = await fetch("/api/recordings", { method: "POST", body: form });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || err.error || "Failed to save recording");
+  }
   return res.json();
 }
 
@@ -21,45 +23,46 @@ export async function deleteRecording(filename) {
   return res.json();
 }
 
-// ── Labels ──────────────────────────────────────────────────────────────
+// ── Languages ────────────────────────────────────────────────────────────
 
-export async function createLabelFile(filename) {
-  const res = await fetch("/api/labels", {
+export async function createLanguage(name) {
+  const res = await fetch("/api/languages", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ filename }),
+    body: JSON.stringify({ name }),
   });
   return res.json();
 }
 
-export async function deleteLabelFile(filename) {
-  const res = await fetch(`/api/labels/${encodeURIComponent(filename)}`, {
+export async function deleteLanguage(name) {
+  const res = await fetch(`/api/languages/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
   return res.json();
 }
 
-export async function addSentence(filename, sentence) {
-  const res = await fetch(
-    `/api/labels/${encodeURIComponent(filename)}/add`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sentence }),
-    }
-  );
+// ── Labels ───────────────────────────────────────────────────────────────
+
+export async function addLabel(language, text) {
+  const res = await fetch("/api/labels/add", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ language, text }),
+  });
   return res.json();
 }
 
-export async function removeSentence(filename, sentence) {
-  const res = await fetch(
-    `/api/labels/${encodeURIComponent(filename)}/remove`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sentence }),
-    }
-  );
+export async function removeLabel(id) {
+  const res = await fetch("/api/labels/remove", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  return res.json();
+}
+
+export async function getDatasetCount() {
+  const res = await fetch("/api/dataset/count");
   return res.json();
 }
 

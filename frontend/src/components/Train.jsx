@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
-import { startTraining, stopTraining, getTrainStatus } from "../api";
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import { startTraining, stopTraining, getTrainStatus, getDatasetCount } from "../api";
 
 const styles = {
   form: {
@@ -68,7 +68,6 @@ const styles = {
 };
 
 const defaultConfig = {
-  language: "en",
   epochs: 5,
   learning_rate: 1e-5,
   train_batch_size: 8,
@@ -77,13 +76,14 @@ const defaultConfig = {
   logging_steps: 100,
   save_steps: 500,
   eval_steps: 500,
-  output_dir: "whisper-finetuned",
+  output_dir: "userdata/outputs",
 };
 
 export default function Train() {
   const [config, setConfig] = useState(defaultConfig);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState("");
+  const [sampleCount, setSampleCount] = useState(0);
   const pollRef = useRef(null);
   const logEndRef = useRef(null);
 
@@ -127,6 +127,7 @@ export default function Train() {
   useEffect(() => {
     // Check if training is already running on mount
     pollStatus();
+    getDatasetCount().then((d) => setSampleCount(d.count || 0));
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
@@ -146,7 +147,6 @@ export default function Train() {
   }, [log]);
 
   const fields = [
-    { key: "language", label: "Language code", type: "text" },
     { key: "epochs", label: "Epochs", type: "number" },
     { key: "learning_rate", label: "Learning rate", type: "number", step: "any" },
     { key: "train_batch_size", label: "Train batch size", type: "number" },
@@ -154,7 +154,6 @@ export default function Train() {
     { key: "logging_steps", label: "Logging steps", type: "number" },
     { key: "save_steps", label: "Save steps", type: "number" },
     { key: "eval_steps", label: "Eval steps", type: "number" },
-    { key: "output_dir", label: "Output directory", type: "text" },
   ];
 
   return (
@@ -188,6 +187,19 @@ export default function Train() {
         </div>
       </div>
 
+      {sampleCount > 0 && (() => {
+        const batchSize = Number(config.train_batch_size) || 1;
+        const epochs = Number(config.epochs) || 1;
+        const trainSamples = Math.round(sampleCount * 0.9);
+        const stepsPerEpoch = Math.ceil(trainSamples / batchSize);
+        const totalSteps = stepsPerEpoch * epochs;
+        return (
+          <p style={{ color: "#666", fontSize: "0.85rem", marginBottom: "12px" }}>
+            {sampleCount} samples ({trainSamples} train) &middot; {stepsPerEpoch} steps/epoch &middot; <strong>{totalSteps} total steps</strong>
+          </p>
+        );
+      })()}
+
       <div style={styles.buttons}>
         <button
           style={{ ...styles.btn("primary"), ...(running ? styles.btnDisabled : {}) }}
@@ -202,6 +214,13 @@ export default function Train() {
           disabled={!running}
         >
           Stop Training
+        </button>
+        <button
+          style={{ ...styles.btn(), ...(running ? styles.btnDisabled : {}) }}
+          onClick={() => { window.location.href = "/api/train/download"; }}
+          disabled={running}
+        >
+          Download Model
         </button>
       </div>
 

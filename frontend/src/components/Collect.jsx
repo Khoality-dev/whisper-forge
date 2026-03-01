@@ -108,10 +108,6 @@ const styles = {
   },
 };
 
-function displayName(filename) {
-  return filename.replace(/\.txt$/, "");
-}
-
 export default function Collect() {
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -132,7 +128,7 @@ export default function Collect() {
     const data = await fetchDataset();
     setGroups(data.groups);
     if (selectedLangs === null && data.groups.length > 0) {
-      setSelectedLangs(new Set(data.groups.map((g) => g.filename)));
+      setSelectedLangs(new Set(data.groups.map((g) => g.language)));
     }
     setLoading(false);
   };
@@ -147,10 +143,10 @@ export default function Collect() {
   const pending = useMemo(() => {
     const items = [];
     for (const group of groups) {
-      if (!activeLangs.has(group.filename)) continue;
+      if (!activeLangs.has(group.language)) continue;
       for (const sent of group.sentences) {
-        if (sent.recordings.length === 0 && !skipped.has(sent.text)) {
-          items.push(sent.text);
+        if (sent.recordings.length === 0 && !skipped.has(sent.id)) {
+          items.push({ id: sent.id, language: group.language, text: sent.text });
         }
       }
     }
@@ -161,7 +157,7 @@ export default function Collect() {
   const totalSelected = useMemo(() => {
     let count = 0;
     for (const g of groups) {
-      if (activeLangs.has(g.filename)) count += g.sentences.length;
+      if (activeLangs.has(g.language)) count += g.sentences.length;
     }
     return count;
   }, [groups, activeLangs]);
@@ -169,7 +165,7 @@ export default function Collect() {
   const recordedCount = useMemo(() => {
     let count = 0;
     for (const g of groups) {
-      if (!activeLangs.has(g.filename)) continue;
+      if (!activeLangs.has(g.language)) continue;
       for (const s of g.sentences) {
         if (s.recordings.length > 0) count++;
       }
@@ -177,17 +173,17 @@ export default function Collect() {
     return count;
   }, [groups, activeLangs]);
 
-  const currentLabel = pending.length > 0 ? pending[0] : null;
+  const current = pending.length > 0 ? pending[0] : null;
   const finished = totalSelected > 0 && pending.length === 0;
   const ratio = totalSelected > 0 ? recordedCount / totalSelected : 0;
 
   // ── Language selection ──
 
-  const toggleLang = (filename) => {
+  const toggleLang = (language) => {
     setSelectedLangs((prev) => {
       const next = new Set(prev);
-      if (next.has(filename)) next.delete(filename);
-      else next.add(filename);
+      if (next.has(language)) next.delete(language);
+      else next.add(language);
       return next;
     });
     setSkipped(new Set());
@@ -245,19 +241,24 @@ export default function Collect() {
   };
 
   const handleSave = async () => {
-    if (!audioBlob || !currentLabel) return;
+    if (!audioBlob || !current) return;
     setSaving(true);
     setStatus("Saving...");
-    await saveRecording(audioBlob, currentLabel);
-    clearAudio();
-    setSaving(false);
-    setStatus("Saved! Moved to next label.");
-    loadData();
+    try {
+      await saveRecording(audioBlob, current.id);
+      clearAudio();
+      setStatus("Saved! Moved to next label.");
+      await loadData();
+    } catch (err) {
+      setStatus(`Error saving: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSkip = () => {
-    if (!currentLabel) return;
-    setSkipped((prev) => new Set([...prev, currentLabel]));
+    if (!current) return;
+    setSkipped((prev) => new Set([...prev, current.id]));
     clearAudio();
     setStatus("Skipped.");
   };
@@ -288,11 +289,11 @@ export default function Collect() {
         <span style={styles.langLabel}>Languages:</span>
         {groups.map((g) => (
           <span
-            key={g.filename}
-            style={styles.chip(activeLangs.has(g.filename))}
-            onClick={() => toggleLang(g.filename)}
+            key={g.language}
+            style={styles.chip(activeLangs.has(g.language))}
+            onClick={() => toggleLang(g.language)}
           >
-            {displayName(g.filename)}
+            {g.language}
           </span>
         ))}
       </div>
@@ -317,9 +318,9 @@ export default function Collect() {
             <div style={styles.done}>
               All labels have been recorded!
             </div>
-          ) : currentLabel ? (
+          ) : current ? (
             <>
-              <div style={styles.sentence}>{currentLabel}</div>
+              <div style={styles.sentence}>{current.text}</div>
 
               {audioURL && (
                 <audio style={styles.audio} src={audioURL} controls />

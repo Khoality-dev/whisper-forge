@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   fetchDataset,
-  createLabelFile,
-  deleteLabelFile,
-  addSentence,
-  removeSentence,
+  createLanguage,
+  deleteLanguage,
+  addLabel,
+  removeLabel,
   saveRecording,
   deleteRecording,
 } from "../api";
@@ -227,10 +227,6 @@ const styles = {
   },
 };
 
-function displayName(filename) {
-  return filename.replace(/\.txt$/, "");
-}
-
 export default function Dataset() {
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -260,28 +256,27 @@ export default function Dataset() {
     loadData();
   }, []);
 
-  const currentGroup = groups.find((g) => g.filename === selectedLang);
+  const currentGroup = groups.find((g) => g.language === selectedLang);
 
   // ── Language management ──
 
   const handleCreateLang = async () => {
     const name = newLangName.trim();
     if (!name) return;
-    await createLabelFile(name);
+    await createLanguage(name);
     setNewLangName("");
     setShowAddLang(false);
     loadData();
   };
 
-  const handleDeleteLang = async (filename) => {
-    const name = displayName(filename);
+  const handleDeleteLang = async (language) => {
     if (
       !confirm(
-        `Delete "${name}" and all its labels? Existing recordings will not be deleted.`
+        `Delete "${language}" and all its labels and recordings?`
       )
     )
       return;
-    await deleteLabelFile(filename);
+    await deleteLanguage(language);
     setSelectedLang(null);
     loadData();
   };
@@ -291,20 +286,20 @@ export default function Dataset() {
   const handleAddLabel = async () => {
     const text = labelInput.trim();
     if (!text || !selectedLang) return;
-    await addSentence(selectedLang, text);
+    await addLabel(selectedLang, text);
     setLabelInput("");
     loadData();
   };
 
-  const handleRemoveLabel = async (sentence) => {
-    if (!confirm("Remove this label?")) return;
-    await removeSentence(selectedLang, sentence);
+  const handleRemoveLabel = async (id) => {
+    if (!confirm("Remove this label and its recordings?")) return;
+    await removeLabel(id);
     loadData();
   };
 
   // ── Recording ──
 
-  const startRec = async (sentence, replaceFilename = null) => {
+  const startRec = async (labelId, replaceFilename = null) => {
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.ondataavailable = null;
       mediaRecorderRef.current.onstop = null;
@@ -330,7 +325,7 @@ export default function Dataset() {
       };
 
       recorder.start();
-      setRecordingFor({ sentence, replaceFilename });
+      setRecordingFor({ labelId, replaceFilename });
       setIsRecording(true);
       setRecordedAudio(null);
     } catch {
@@ -348,15 +343,20 @@ export default function Dataset() {
   const handleSaveRecording = async () => {
     if (!recordedAudio || !recordingFor) return;
     setSaving(true);
-    await saveRecording(
-      recordedAudio.blob,
-      recordingFor.sentence,
-      recordingFor.replaceFilename
-    );
-    setRecordingFor(null);
-    setRecordedAudio(null);
-    setSaving(false);
-    loadData();
+    try {
+      await saveRecording(
+        recordedAudio.blob,
+        recordingFor.labelId,
+        recordingFor.replaceFilename
+      );
+      setRecordingFor(null);
+      setRecordedAudio(null);
+      await loadData();
+    } catch (err) {
+      alert(`Error saving: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const cancelRec = () => {
@@ -422,7 +422,7 @@ export default function Dataset() {
 
         <div style={styles.detailHeader}>
           <span style={styles.detailTitle}>
-            {displayName(currentGroup.filename)}
+            {currentGroup.language}
           </span>
           <span style={styles.badge}>
             {groupRecorded} / {groupLabels.length} recorded
@@ -432,7 +432,7 @@ export default function Dataset() {
           </span>
           <button
             style={styles.btnSmallDanger}
-            onClick={() => handleDeleteLang(currentGroup.filename)}
+            onClick={() => handleDeleteLang(currentGroup.language)}
           >
             Delete Language
           </button>
@@ -443,13 +443,13 @@ export default function Dataset() {
           <div style={styles.empty}>No labels yet. Add one below.</div>
         )}
 
-        {groupLabels.map((sent, idx) => (
-          <div key={idx} style={styles.labelRow}>
+        {groupLabels.map((sent) => (
+          <div key={sent.id} style={styles.labelRow}>
             <div style={styles.labelHeader}>
               <span style={styles.labelText}>{sent.text}</span>
               <button
                 style={styles.btnSmallDanger}
-                onClick={() => handleRemoveLabel(sent.text)}
+                onClick={() => handleRemoveLabel(sent.id)}
               >
                 Remove
               </button>
@@ -466,7 +466,7 @@ export default function Dataset() {
                 />
                 <button
                   style={styles.btnSmall}
-                  onClick={() => startRec(sent.text, rec.filename)}
+                  onClick={() => startRec(sent.id, rec.filename)}
                 >
                   Re-record
                 </button>
@@ -480,7 +480,7 @@ export default function Dataset() {
             ))}
 
             {/* Inline recorder */}
-            {recordingFor && recordingFor.sentence === sent.text ? (
+            {recordingFor && recordingFor.labelId === sent.id ? (
               <div style={styles.recorderInline}>
                 {isRecording ? (
                   <>
@@ -521,7 +521,7 @@ export default function Dataset() {
             ) : (
               <button
                 style={styles.recordBtn}
-                onClick={() => startRec(sent.text)}
+                onClick={() => startRec(sent.id)}
               >
                 Record
               </button>
@@ -627,16 +627,16 @@ export default function Dataset() {
 
         return (
           <div
-            key={group.filename}
+            key={group.language}
             style={styles.langCard}
-            onClick={() => setSelectedLang(group.filename)}
+            onClick={() => setSelectedLang(group.language)}
             onMouseEnter={(e) =>
               (e.currentTarget.style.background = "#f9fafb")
             }
             onMouseLeave={(e) => (e.currentTarget.style.background = "")}
           >
             <span style={styles.langName}>
-              {displayName(group.filename)}
+              {group.language}
             </span>
             <span style={styles.badge}>
               {labelCount} label{labelCount !== 1 ? "s" : ""}
