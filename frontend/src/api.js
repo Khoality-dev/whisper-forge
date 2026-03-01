@@ -66,6 +66,22 @@ export async function getDatasetCount() {
   return res.json();
 }
 
+// ── Train config ────────────────────────────────────────────────────────
+
+export async function getTrainConfig() {
+  const res = await fetch("/api/train/config");
+  return res.json();
+}
+
+export async function saveTrainConfig(config) {
+  const res = await fetch("/api/train/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  return res.json();
+}
+
 // ── Training ────────────────────────────────────────────────────────────
 
 export async function startTraining(config) {

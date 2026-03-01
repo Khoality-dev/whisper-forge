@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { startTraining, stopTraining, getTrainStatus, getDatasetCount } from "../api";
+import { startTraining, stopTraining, getTrainStatus, getDatasetCount, getTrainConfig, saveTrainConfig } from "../api";
 
 const styles = {
   form: {
@@ -89,7 +89,11 @@ export default function Train() {
 
   const set = (key) => (e) => {
     const val = e.target.type === "checkbox" ? e.target.checked : e.target.value;
-    setConfig((prev) => ({ ...prev, [key]: val }));
+    setConfig((prev) => {
+      const next = { ...prev, [key]: val };
+      saveTrainConfig(next);
+      return next;
+    });
   };
 
   const pollStatus = async () => {
@@ -125,9 +129,13 @@ export default function Train() {
   };
 
   useEffect(() => {
-    // Check if training is already running on mount
     pollStatus();
     getDatasetCount().then((d) => setSampleCount(d.count || 0));
+    getTrainConfig().then((saved) => {
+      if (saved && Object.keys(saved).length > 0) {
+        setConfig((prev) => ({ ...prev, ...saved }));
+      }
+    });
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };

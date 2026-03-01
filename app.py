@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -402,7 +403,26 @@ def dataset_count():
     return {"count": len(_read_recordings())}
 
 
+TRAIN_CONFIG_PATH = "userdata/train_config.json"
+
+
 # ── Train endpoints ──────────────────────────────────────────────────────
+
+@app.get("/api/train/config")
+def get_train_config():
+    if os.path.exists(TRAIN_CONFIG_PATH):
+        with open(TRAIN_CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+@app.put("/api/train/config")
+def save_train_config(config: dict):
+    os.makedirs(os.path.dirname(TRAIN_CONFIG_PATH), exist_ok=True)
+    with open(TRAIN_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
+    return {"message": "Config saved."}
+
 
 @app.post("/api/train/start")
 def start_training(config: dict):
