@@ -3,7 +3,6 @@ import csv
 import glob
 import os
 import shutil
-import numpy as np
 from datasets import Dataset, Audio
 from transformers import (
     WhisperProcessor,
@@ -88,25 +87,21 @@ def main():
     ds = ds.train_test_split(test_size=args.val_split, seed=42)
     ds["validation"] = ds.pop("test")
 
-    # Preprocessing function
+    # Lazy preprocessing — loads audio on-the-fly so only one batch is in RAM
     def preprocess(batch):
-        audio = batch["audio"]["array"]
+        audio_arrays = [a["array"] for a in batch["audio"]]
         inputs = processor.feature_extractor(
-            audio, sampling_rate=16_000, return_tensors="np"
+            audio_arrays, sampling_rate=16_000, return_tensors="np"
         )
-        batch["input_features"] = inputs.input_features[0]
-        labels = processor.tokenizer(
-            batch["text"], truncation=True, return_tensors="np"
-        ).input_ids[0]
-        batch["labels"] = labels
+        batch["input_features"] = inputs.input_features
+        batch["labels"] = [
+            processor.tokenizer(t, truncation=True).input_ids
+            for t in batch["text"]
+        ]
         return batch
 
-    # Apply preprocessing
-    ds = ds.map(
-        preprocess,
-        remove_columns=ds["train"].column_names,
-        num_proc=4
-    )
+    ds["train"].set_transform(preprocess)
+    ds["validation"].set_transform(preprocess)
 
     # Data collator for dynamic padding
     data_collator = DataCollatorSpeechSeq2Seq(
@@ -137,6 +132,7 @@ def main():
         output_dir=args.output_dir,
         per_device_train_batch_size=args.train_batch_size,
         per_device_eval_batch_size=args.eval_batch_size,
+        remove_unused_columns=False,
         predict_with_generate=True,
         logging_steps=args.logging_steps,
         eval_strategy ="steps",
