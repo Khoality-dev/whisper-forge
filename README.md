@@ -4,6 +4,8 @@
 
 It provides a clean browser-based interface where you can record audio, manage transcripts, and fine-tune a model — all in one place.
 
+![WhisperForge UI](image.png)
+
 ---
 
 ## ✨ What You Can Do
