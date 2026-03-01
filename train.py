@@ -1,5 +1,7 @@
 import argparse
 import csv
+import glob
+import shutil
 import numpy as np
 from datasets import Dataset, Audio
 from transformers import (
@@ -146,9 +148,13 @@ def main():
         tokenizer=processor,
     )
 
-    # Train and save
+    # Train and save best model
     trainer.train()
     trainer.save_model(args.output_dir)
+
+    # Remove checkpoint directories
+    for ckpt in glob.glob(f"{args.output_dir}/checkpoint-*"):
+        shutil.rmtree(ckpt)
 
     # Final evaluation
     metrics = trainer.evaluate()
