@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { startTraining, stopTraining, getTrainStatus, getDatasetCount, getTrainConfig, saveTrainConfig } from "../api";
+import { startTraining, stopTraining, getTrainStatus, getDatasetCount, getTrainConfig, saveTrainConfig, predictSamples } from "../api";
 
 const styles = {
   form: {
@@ -84,6 +84,8 @@ export default function Train() {
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState("");
   const [sampleCount, setSampleCount] = useState(0);
+  const [predictions, setPredictions] = useState(null);
+  const [predicting, setPredicting] = useState(false);
   const pollRef = useRef(null);
   const logEndRef = useRef(null);
 
@@ -230,11 +232,51 @@ export default function Train() {
         >
           Download Model
         </button>
+        <button
+          style={{ ...styles.btn(), ...(running || predicting ? styles.btnDisabled : {}) }}
+          onClick={async () => {
+            setPredicting(true);
+            setPredictions(null);
+            try {
+              const res = await predictSamples(5);
+              if (res.error) { setPredictions([]); setLog((prev) => prev + "\n" + res.error); }
+              else { setPredictions(res); }
+            } catch { setPredictions([]); }
+            setPredicting(false);
+          }}
+          disabled={running || predicting}
+        >
+          {predicting ? "Testing..." : "Test Model"}
+        </button>
       </div>
 
       <div style={styles.logArea} ref={logEndRef}>
         {log || "No training output yet."}
       </div>
+
+      {predictions && predictions.length > 0 && (
+        <div style={{ marginTop: "20px" }}>
+          <h3 style={{ fontSize: "1rem", marginBottom: "10px" }}>Sample Predictions</h3>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+            <thead>
+              <tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left" }}>
+                <th style={{ padding: "8px" }}>Expected</th>
+                <th style={{ padding: "8px" }}>Predicted</th>
+              </tr>
+            </thead>
+            <tbody>
+              {predictions.map((p, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                  <td style={{ padding: "8px", color: "#444" }}>{p.expected}</td>
+                  <td style={{ padding: "8px", color: p.expected.toLowerCase() === p.predicted.toLowerCase() ? "#16a34a" : "#dc2626" }}>
+                    {p.predicted}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

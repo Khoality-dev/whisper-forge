@@ -102,3 +102,12 @@ export async function getTrainStatus() {
   const res = await fetch("/api/train/status");
   return res.json();
 }
+
+export async function predictSamples(n = 5) {
+  const res = await fetch("/api/train/predict", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ n }),
+  });
+  return res.json();
+}

@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py train.py data_collators.py ./
+COPY app.py train.py predict.py data_collators.py ./
 COPY --from=frontend /static ./static/
 RUN mkdir -p userdata/labels userdata/dataset/audio_files
 EXPOSE 7860

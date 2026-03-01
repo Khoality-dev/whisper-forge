@@ -493,6 +493,36 @@ def train_status():
     return {"running": running, "log": log, "exit_code": exit_code}
 
 
+@app.post("/api/train/predict")
+def predict_samples(body: dict = {}):
+    model_dir = "userdata/outputs"
+    if not os.path.isdir(model_dir):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "No trained model found. Train a model first."},
+        )
+
+    n = int(body.get("n", 5))
+    result = subprocess.run(
+        [
+            sys.executable, "predict.py",
+            "--model_dir", model_dir,
+            "--labels", LABELS_CSV,
+            "--recordings", RECORDINGS_CSV,
+            "--n", str(n),
+        ],
+        capture_output=True, text=True, timeout=120,
+    )
+
+    if result.returncode != 0:
+        return JSONResponse(
+            status_code=500,
+            content={"error": result.stderr or "Prediction failed."},
+        )
+
+    return json.loads(result.stdout)
+
+
 @app.get("/api/train/download")
 def download_model():
     model_dir = "userdata/outputs"
