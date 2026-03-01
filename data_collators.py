@@ -11,6 +11,9 @@ class DataCollatorSpeechSeq2Seq:
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
         input_features = [{'input_features': feature['input_features']} for feature in features]
         batch = self.processor.feature_extractor.pad(input_features, return_tensors='pt')
+
+        if 'attention_mask' in features[0]:
+            batch['attention_mask'] = torch.stack([torch.tensor(f['attention_mask']) for f in features])
  
         label_features = [{'input_ids': feature['labels']} for feature in features]
         labels_batch = self.processor.tokenizer.pad(label_features, return_tensors='pt')

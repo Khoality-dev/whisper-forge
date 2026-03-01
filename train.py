@@ -2,6 +2,7 @@ import argparse
 import csv
 import glob
 import os
+import signal
 import shutil
 from datasets import Dataset, Audio
 from transformers import (
@@ -73,6 +74,7 @@ def main():
     model.generation_config.task = 'transcribe'
 
     model.generation_config.forced_decoder_ids = None
+    model.config.forced_decoder_ids = None
 
     # Scan dataset directories for samples
     rows = scan_samples(args.dataset_dirs)
@@ -91,9 +93,10 @@ def main():
     def preprocess(batch):
         audio_arrays = [a["array"] for a in batch["audio"]]
         inputs = processor.feature_extractor(
-            audio_arrays, sampling_rate=16_000, return_tensors="np"
+            audio_arrays, sampling_rate=16_000, return_attention_mask=True, return_tensors="np"
         )
         batch["input_features"] = inputs.input_features
+        batch["attention_mask"] = inputs.attention_mask
         batch["labels"] = [
             processor.tokenizer(t, truncation=True).input_ids
             for t in batch["text"]
@@ -158,6 +161,10 @@ def main():
         compute_metrics=compute_metrics,
         tokenizer=processor,
     )
+
+    # Remove leftover checkpoints from previous interrupted runs
+    for ckpt in glob.glob(f"{args.output_dir}/checkpoint-*"):
+        shutil.rmtree(ckpt)
 
     # Train and save best model
     trainer.train()

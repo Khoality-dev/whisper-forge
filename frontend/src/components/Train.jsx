@@ -33,7 +33,7 @@ const styles = {
     fontSize: "0.75rem",
     color: color || "#6b7280",
     background:
-      color === "#16a34a" ? "#f0fdf4" : color === "#ea580c" ? "#fff7ed" : "#e5e7eb",
+      color === "#16a34a" ? "#f0fdf4" : color === "#ea580c" ? "#fff7ed" : color === "#a855f7" ? "#faf5ff" : "#e5e7eb",
     padding: "2px 8px",
     borderRadius: "10px",
     fontWeight: 500,
@@ -198,6 +198,7 @@ const statusColors = {
   untrained: "#6b7280",
   trained: "#16a34a",
   training: "#ea580c",
+  queued: "#a855f7",
 };
 
 const defaultConfig = {
@@ -225,6 +226,8 @@ export default function Train() {
   const [config, setConfig] = useState(defaultConfig);
   const [datasets, setDatasets] = useState([]);
   const [running, setRunning] = useState(false);
+  const [queued, setQueued] = useState(false);
+  const [queuePosition, setQueuePosition] = useState(null);
   const [log, setLog] = useState("");
   const [predictions, setPredictions] = useState(null);
   const [predicting, setPredicting] = useState(false);
@@ -247,8 +250,10 @@ export default function Train() {
     setConfig({ ...defaultConfig, ...configData });
     setDatasets(dsData.datasets || []);
     setRunning(statusData.running);
+    setQueued(statusData.queued || false);
+    setQueuePosition(statusData.queue_position ?? null);
     setLog(statusData.log || "");
-    if (statusData.running && !pollRef.current) {
+    if ((statusData.running || statusData.queued) && !pollRef.current) {
       pollRef.current = setInterval(() => pollStatus(name), 2000);
     }
   };
@@ -269,6 +274,8 @@ export default function Train() {
         pollRef.current = null;
       }
       setLog("");
+      setQueued(false);
+      setQueuePosition(null);
       setPredictions(null);
     }
   }, [selected]);
@@ -282,8 +289,10 @@ export default function Train() {
   const pollStatus = async (name) => {
     const data = await getModelStatus(name);
     setRunning(data.running);
+    setQueued(data.queued || false);
+    setQueuePosition(data.queue_position ?? null);
     setLog(data.log || "");
-    if (!data.running && data.exit_code !== null) {
+    if (!data.running && !data.queued && data.exit_code !== null) {
       setLog(
         (prev) =>
           prev + `\n\nTraining finished (exit code ${data.exit_code}).`
@@ -347,19 +356,27 @@ export default function Train() {
       setLog(res.error);
       return;
     }
-    setRunning(true);
+    const isQueued = res.message === "Training queued.";
+    setRunning(!isQueued);
+    setQueued(isQueued);
     setLog(res.message + "\n");
-    pollRef.current = setInterval(() => pollStatus(selected), 2000);
+    if (!pollRef.current) {
+      pollRef.current = setInterval(() => pollStatus(selected), 2000);
+    }
+    loadModels();
   };
 
   const handleStop = async () => {
     const res = await stopModelTraining(selected);
     setRunning(false);
+    setQueued(false);
+    setQueuePosition(null);
     setLog((prev) => prev + "\n" + res.message);
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
+    loadModels();
   };
 
   const handlePredict = async () => {
@@ -436,7 +453,7 @@ export default function Train() {
                 type="checkbox"
                 checked={selectedDatasets.includes(ds.name)}
                 onChange={() => toggleDataset(ds.name)}
-                disabled={running}
+                disabled={running || queued}
               />
               {ds.name}{" "}
               <span style={{ color: "#9ca3af", fontSize: "0.8rem" }}>
@@ -468,7 +485,7 @@ export default function Train() {
                 step={step}
                 value={config[key]}
                 onChange={(e) => updateConfig(key, e.target.value)}
-                disabled={running}
+                disabled={running || queued}
               />
             </div>
           ))}
@@ -512,47 +529,54 @@ export default function Train() {
             );
           })()}
 
+        {/* Queue position indicator */}
+        {queued && (
+          <p style={{ color: "#a855f7", fontSize: "0.9rem", fontWeight: 500, marginBottom: "12px" }}>
+            Queued (position {queuePosition})
+          </p>
+        )}
+
         {/* Buttons */}
         <div style={styles.buttons}>
           <button
             style={{
               ...styles.btn("primary"),
-              ...(running ? styles.btnDisabled : {}),
+              ...(running || queued ? styles.btnDisabled : {}),
             }}
             onClick={handleStart}
-            disabled={running}
+            disabled={running || queued}
           >
             Start Training
           </button>
           <button
             style={{
               ...styles.btn("danger"),
-              ...(!running ? styles.btnDisabled : {}),
+              ...(!running && !queued ? styles.btnDisabled : {}),
             }}
             onClick={handleStop}
-            disabled={!running}
+            disabled={!running && !queued}
           >
-            Stop Training
+            {queued ? "Cancel Queue" : "Stop Training"}
           </button>
           <button
             style={{
               ...styles.btn(),
-              ...(running ? styles.btnDisabled : {}),
+              ...(running || queued ? styles.btnDisabled : {}),
             }}
             onClick={() => {
               window.location.href = `/api/models/${encodeURIComponent(selected)}/download`;
             }}
-            disabled={running}
+            disabled={running || queued}
           >
             Download Model
           </button>
           <button
             style={{
               ...styles.btn(),
-              ...(running || predicting ? styles.btnDisabled : {}),
+              ...(running || queued || predicting ? styles.btnDisabled : {}),
             }}
             onClick={handlePredict}
-            disabled={running || predicting}
+            disabled={running || queued || predicting}
           >
             {predicting ? "Testing..." : "Test Model"}
           </button>

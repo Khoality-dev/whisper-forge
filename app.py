@@ -151,9 +151,10 @@ def _list_models() -> list[dict]:
                         os.path.exists(os.path.join(model_path, "pytorch_model.bin"))
             status = "untrained"
             with train_lock:
-                proc = train_processes.get(entry)
-                if proc is not None and proc.poll() is None:
+                if active_train == entry and active_proc is not None and active_proc.poll() is None:
                     status = "training"
+                elif entry in train_queue:
+                    status = "queued"
                 elif has_model:
                     status = "trained"
             models.append({"name": entry, "status": status})
@@ -180,19 +181,110 @@ _migrate_v2()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  Train — helpers & state (per-model)
+#  Train — helpers & state (queue-based, one model at a time)
 # ═══════════════════════════════════════════════════════════════════════════
 
-train_processes: dict[str, subprocess.Popen] = {}
+train_queue: list[str] = []          # ordered model names waiting
+active_train: str | None = None      # currently training model
+active_proc: subprocess.Popen | None = None
 train_lock = threading.Lock()
 train_log_lines: dict[str, list[str]] = {}
 
 
-def _read_train_output(model_name: str):
-    with train_lock:
-        proc = train_processes.get(model_name)
-    if proc is None:
+def _promote_best_checkpoint(model_path: str):
+    """After training is stopped, promote the best checkpoint to model root."""
+    checkpoints = sorted(glob(os.path.join(model_path, "checkpoint-*")))
+    if not checkpoints:
         return
+
+    # Pick best checkpoint via trainer_state.json, fall back to latest
+    best_ckpt = checkpoints[-1]
+    state_path = os.path.join(model_path, "trainer_state.json")
+    if os.path.exists(state_path):
+        with open(state_path, "r") as f:
+            state = json.load(f)
+        best = state.get("best_model_checkpoint")
+        if best and os.path.isdir(best):
+            best_ckpt = best
+
+    # Copy inference files, skip optimizer/scheduler/rng (large, training-only)
+    skip = {"optimizer.pt", "scheduler.pt", "training_args.bin"}
+    for fname in os.listdir(best_ckpt):
+        if fname in skip or fname.startswith("rng_state"):
+            continue
+        src = os.path.join(best_ckpt, fname)
+        if os.path.isfile(src):
+            shutil.copy2(src, os.path.join(model_path, fname))
+
+    # Clean up all checkpoint dirs
+    for ckpt in checkpoints:
+        shutil.rmtree(ckpt)
+
+
+def _build_train_cmd(model_name: str) -> list[str]:
+    """Build the train.py command from a model's config."""
+    model_path = os.path.join(MODELS_DIR, model_name)
+    config_path = os.path.join(model_path, "config.json")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    dataset_dirs = []
+    for ds_name in config.get("datasets", []):
+        ds_path = os.path.join(DATASETS_DIR, ds_name)
+        if os.path.isdir(ds_path):
+            dataset_dirs.append(ds_path)
+
+    cmd = [
+        sys.executable, "train.py",
+        "--dataset_dirs", *dataset_dirs,
+        "--output_dir", model_path,
+        "--epochs", str(int(config.get("epochs", 5))),
+        "--learning_rate", str(config.get("learning_rate", 1e-5)),
+        "--train_batch_size", str(int(config.get("train_batch_size", 8))),
+        "--eval_batch_size", str(int(config.get("eval_batch_size", 8))),
+        "--logging_steps", str(int(config.get("logging_steps", 100))),
+        "--save_steps", str(int(config.get("save_steps", 500))),
+        "--eval_steps", str(int(config.get("eval_steps", 500))),
+    ]
+    if config.get("fp16", False):
+        cmd.append("--fp16")
+    return cmd
+
+
+def _start_next_in_queue():
+    """Start the next queued model. Must be called under train_lock."""
+    global active_train, active_proc
+    if active_proc is not None and active_proc.poll() is None:
+        return
+    if not train_queue:
+        return
+    model_name = train_queue.pop(0)
+    train_log_lines[model_name] = []
+    cmd = _build_train_cmd(model_name)
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    active_train = model_name
+    active_proc = proc
+    reader = threading.Thread(target=_read_train_output, args=(model_name, proc), daemon=True)
+    reader.start()
+
+
+def _on_train_finished(model_name: str):
+    """Called when a training process exits. Starts the next queued model."""
+    global active_train, active_proc
+    with train_lock:
+        if active_train == model_name:
+            active_train = None
+            active_proc = None
+        _start_next_in_queue()
+
+
+def _read_train_output(model_name: str, proc: subprocess.Popen):
     for line in iter(proc.stdout.readline, ""):
         if not line:
             break
@@ -201,6 +293,7 @@ def _read_train_output(model_name: str):
                 train_log_lines[model_name] = []
             train_log_lines[model_name].append(line)
     proc.wait()
+    _on_train_finished(model_name)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -473,13 +566,16 @@ def delete_model(name: str):
     model_path = os.path.join(MODELS_DIR, name)
     if not os.path.isdir(model_path):
         return JSONResponse(status_code=404, content={"error": "Model version not found."})
+    proc_to_stop = None
     with train_lock:
-        proc = train_processes.get(name)
-        if proc and proc.poll() is None:
-            proc.terminate()
-            proc.wait(timeout=10)
-        train_processes.pop(name, None)
+        if name in train_queue:
+            train_queue.remove(name)
+        if active_train == name and active_proc is not None:
+            proc_to_stop = active_proc
         train_log_lines.pop(name, None)
+    if proc_to_stop is not None:
+        proc_to_stop.terminate()
+        proc_to_stop.wait(timeout=10)
     shutil.rmtree(model_path)
     return {"message": f"Deleted model version '{name}'."}
 
@@ -517,14 +613,6 @@ def start_model_training(name: str):
     if not os.path.exists(config_path):
         return JSONResponse(status_code=404, content={"error": "Model version not found."})
 
-    with train_lock:
-        proc = train_processes.get(name)
-        if proc is not None and proc.poll() is None:
-            return JSONResponse(
-                status_code=409,
-                content={"error": "Training is already running for this model."},
-            )
-
     with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
 
@@ -535,7 +623,6 @@ def start_model_training(name: str):
             content={"error": "No datasets selected. Configure datasets first."},
         )
 
-    dataset_dirs = []
     for ds_name in dataset_names:
         ds_path = os.path.join(DATASETS_DIR, ds_name)
         if not os.path.isdir(ds_path):
@@ -543,52 +630,43 @@ def start_model_training(name: str):
                 status_code=400,
                 content={"error": f"Dataset '{ds_name}' not found."},
             )
-        dataset_dirs.append(ds_path)
-
-    cmd = [
-        sys.executable, "train.py",
-        "--dataset_dirs", *dataset_dirs,
-        "--output_dir", model_path,
-        "--epochs", str(int(config.get("epochs", 5))),
-        "--learning_rate", str(config.get("learning_rate", 1e-5)),
-        "--train_batch_size", str(int(config.get("train_batch_size", 8))),
-        "--eval_batch_size", str(int(config.get("eval_batch_size", 8))),
-        "--logging_steps", str(int(config.get("logging_steps", 100))),
-        "--save_steps", str(int(config.get("save_steps", 500))),
-        "--eval_steps", str(int(config.get("eval_steps", 500))),
-    ]
-    if config.get("fp16", False):
-        cmd.append("--fp16")
 
     with train_lock:
-        train_log_lines[name] = []
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        train_processes[name] = proc
+        if active_train == name or name in train_queue:
+            return JSONResponse(
+                status_code=409,
+                content={"error": "Training is already running or queued for this model."},
+            )
+        train_queue.append(name)
+        _start_next_in_queue()
+        started = active_train == name
 
-    reader = threading.Thread(target=_read_train_output, args=(name,), daemon=True)
-    reader.start()
-
-    return {"message": f"Training started (PID {proc.pid})."}
+    if started:
+        return {"message": "Training started."}
+    return {"message": "Training queued."}
 
 
 @app.post("/api/models/{name}/stop")
 def stop_model_training(name: str):
     if not _safe_name(name):
         return JSONResponse(status_code=400, content={"error": "Invalid model name."})
+    proc_to_stop = None
     with train_lock:
-        proc = train_processes.get(name)
-        if proc and proc.poll() is None:
-            proc.terminate()
-            proc.wait(timeout=10)
-            train_processes[name] = None
-            return {"message": "Training stopped."}
-    return {"message": "No training process running."}
+        if name in train_queue:
+            train_queue.remove(name)
+            return {"message": "Removed from training queue."}
+        if active_train == name and active_proc is not None and active_proc.poll() is None:
+            proc_to_stop = active_proc
+    if proc_to_stop is None:
+        return {"message": "No training process running."}
+    # Terminate outside the lock to avoid deadlock with reader thread
+    proc_to_stop.terminate()
+    proc_to_stop.wait(timeout=10)
+    # Promote best checkpoint so the model is usable for testing
+    model_path = os.path.join(MODELS_DIR, name)
+    _promote_best_checkpoint(model_path)
+    # Reader thread will call _on_train_finished → _start_next_in_queue
+    return {"message": "Training stopped."}
 
 
 @app.get("/api/models/{name}/status")
@@ -596,13 +674,22 @@ def model_train_status(name: str):
     if not _safe_name(name):
         return JSONResponse(status_code=400, content={"error": "Invalid model name."})
     with train_lock:
-        proc = train_processes.get(name)
+        is_active = active_train == name
+        proc = active_proc if is_active else None
         log = "".join(train_log_lines.get(name, []))
+        queued = name in train_queue
+        queue_position = (train_queue.index(name) + 1) if queued else None
     running = proc is not None and proc.poll() is None
     exit_code = None
     if proc is not None and proc.poll() is not None:
         exit_code = proc.returncode
-    return {"running": running, "log": log, "exit_code": exit_code}
+    return {
+        "running": running,
+        "log": log,
+        "exit_code": exit_code,
+        "queued": queued,
+        "queue_position": queue_position,
+    }
 
 
 @app.get("/api/models/{name}/download")
